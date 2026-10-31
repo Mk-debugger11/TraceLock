@@ -18,6 +18,11 @@ STAGE_QUEUED = "queued"
 STAGE_REPOSITORY_FETCH = "repository_fetch"
 STAGE_REPOSITORY_FETCHED = "repository_fetched"
 
+# Where the project comes from. For local and upload scans repository_url holds the path or file name.
+SOURCE_GITHUB = "github"
+SOURCE_LOCAL = "local"
+SOURCE_UPLOAD = "upload"
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -27,6 +32,7 @@ class Scan(Base):
     __tablename__ = "scans"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_type: Mapped[str] = mapped_column(String(16), default=SOURCE_GITHUB)
     repository_url: Mapped[str] = mapped_column(String(512))
     ref: Mapped[str] = mapped_column(String(255))
     commit_sha: Mapped[Optional[str]] = mapped_column(String(64))

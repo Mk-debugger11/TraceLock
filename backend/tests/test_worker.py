@@ -1,3 +1,6 @@
+import io
+import zipfile
+
 from app.ingestion.github_loader import RepositoryFetchError, RepositoryMetadata
 from app.models.scan import Scan
 from app.services import scan_service
@@ -100,6 +103,43 @@ def test_unexpected_crash_hides_details(client, session_factory, monkeypatch):
     body = client.get(f"/api/scans/{scan_id}").json()
     assert body["status"] == "failed"
     assert "secret" not in body["error"]
+
+
+def test_local_scan_copies_folder_into_workspace(client, session_factory, workspace, tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("import yaml\n")
+    (project / "requirements.txt").write_text("pyyaml==5.3\n")
+    monkeypatch.setenv("TRACELOCK_ALLOW_LOCAL_PATHS", "1")
+    scan_id = client.post("/api/analyze", data={"repo_type": "local", "path": str(project)}).json()["scan_id"]
+
+    with session_factory() as db:
+        process_scan(db, scan_service.claim_next_queued_scan(db))
+
+    body = client.get(f"/api/scans/{scan_id}").json()
+    assert (body["status"], body["stage"]) == ("ready_for_analysis", "repository_fetched")
+    assert body["python_file_count"] == 1 and body["manifest_files"] == ["requirements.txt"]
+    with session_factory() as db:
+        assert db.get(Scan, scan_id).workspace_path == str(workspace / "scans" / scan_id / "repository")
+
+
+def test_upload_scan_extracts_zip_and_deletes_it(client, session_factory, workspace):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("proj/app.py", "import yaml\n")
+        zf.writestr("proj/requirements.txt", "pyyaml==5.3\n")
+    res = client.post("/api/analyze", data={"repo_type": "upload"}, files={"repo_file": ("proj.zip", buf.getvalue())})
+    scan_id = res.json()["scan_id"]
+
+    with session_factory() as db:
+        process_scan(db, scan_service.claim_next_queued_scan(db))
+
+    body = client.get(f"/api/scans/{scan_id}").json()
+    assert body["status"] == "ready_for_analysis"
+    assert body["python_file_count"] == 1
+    assert not (workspace / "uploads" / f"{scan_id}.zip").exists()
+    with session_factory() as db:
+        assert db.get(Scan, scan_id).workspace_path.endswith(f"{scan_id}/repository/proj")
 
 
 def test_interrupted_scans_are_requeued(client, session_factory):

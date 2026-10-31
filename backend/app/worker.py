@@ -9,8 +9,9 @@ import time
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal, init_db
-from app.ingestion.github_loader import RepositoryFetchError, fetch_repository
-from app.models.scan import Scan
+from app.ingestion.github_loader import RepositoryFetchError, RepositoryMetadata, fetch_repository
+from app.ingestion.local_loader import fetch_local_directory, fetch_zip_archive, upload_path
+from app.models.scan import SOURCE_LOCAL, SOURCE_UPLOAD, Scan
 from app.services import scan_service
 
 logger = logging.getLogger(__name__)
@@ -18,10 +19,22 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = 2
 
 
+def _fetch(scan: Scan) -> RepositoryMetadata:
+    if scan.source_type == SOURCE_LOCAL:
+        return fetch_local_directory(scan.id, scan.repository_url)
+    if scan.source_type == SOURCE_UPLOAD:
+        archive = upload_path(scan.id)
+        try:
+            return fetch_zip_archive(scan.id, archive, scan.repository_url)
+        finally:
+            archive.unlink(missing_ok=True)
+    return fetch_repository(scan.id, scan.repository_url, scan.ref)
+
+
 def process_scan(db: Session, scan: Scan) -> None:
-    """Fetch the scan's repository and record the outcome. Never raises for a failed scan."""
+    """Fetch the scan's project and record the outcome. Never raises for a failed scan."""
     try:
-        metadata = fetch_repository(scan.id, scan.repository_url, scan.ref)
+        metadata = _fetch(scan)
     except RepositoryFetchError as exc:
         logger.warning("Scan %s failed: %s", scan.id, exc)
         scan_service.mark_scan_failed(db, scan, str(exc))

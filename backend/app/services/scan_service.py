@@ -7,6 +7,7 @@ from app.models.scan import (
     STAGE_QUEUED,
     STAGE_REPOSITORY_FETCH,
     STAGE_REPOSITORY_FETCHED,
+    SOURCE_GITHUB,
     STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_READY_FOR_ANALYSIS,
@@ -15,9 +16,20 @@ from app.models.scan import (
 )
 
 
-def create_scan(db: Session, repository_url: str, ref: str) -> Scan:
-    """Save a new queued scan. Cloning/analysis is left to a worker."""
-    scan = Scan(repository_url=repository_url, ref=ref)
+def create_scan(
+    db: Session,
+    repository_url: str,
+    ref: str,
+    source_type: str = SOURCE_GITHUB,
+    scan_id: Optional[str] = None,
+) -> Scan:
+    """Save a new queued scan. Cloning/analysis is left to a worker.
+
+    Pass scan_id when files must be in place (an uploaded zip) before the worker can claim the scan.
+    """
+    scan = Scan(repository_url=repository_url, ref=ref, source_type=source_type)
+    if scan_id is not None:
+        scan.id = scan_id
     db.add(scan)
     db.commit()
     return scan

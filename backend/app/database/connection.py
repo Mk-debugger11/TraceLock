@@ -31,6 +31,9 @@ def init_db() -> None:
     if "repository_metadata" not in columns:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE scans ADD COLUMN repository_metadata JSON"))
+    if "source_type" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE scans ADD COLUMN source_type VARCHAR(16) NOT NULL DEFAULT 'github'"))
 
 
 def get_db() -> Iterator[Session]:

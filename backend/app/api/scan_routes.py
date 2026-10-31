@@ -33,6 +33,7 @@ def get_scan(scan_id: str, db: Session = Depends(get_db)):
         status=scan.status,
         stage=scan.stage,
         progress=scan.progress,
+        source_type=scan.source_type,
         error=scan.error_message,
         commit_sha=scan.commit_sha,
         python_file_count=metadata.get("python_file_count"),
