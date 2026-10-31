@@ -40,6 +40,7 @@ class FunctionInfo:
     entry_kind: Optional[str] = None       # main | module | route | test | None
     decorators: list[str] = field(default_factory=list)
     is_class: bool = False
+    bases: list[str] = field(default_factory=list)   # classes only: resolved base-class dotted names
 
 
 @dataclass
@@ -52,6 +53,7 @@ class CallSite:
     code: str
     kwargs: dict = field(default_factory=dict)   # kwarg name -> source text of the value
     receiver: Optional[str] = None         # resolved receiver for attribute calls
+    kwargs_resolved: dict = field(default_factory=dict)  # kwarg name -> dotted name the value resolves to (or None)
 
 
 @dataclass
@@ -79,10 +81,29 @@ class AppModel:
     strings: list = field(default_factory=list)            # list[StringRef]
     star_imports: list = field(default_factory=list)       # (module imported from, file, line)
     imported_top_levels: dict = field(default_factory=dict)  # top-level module -> [(file, line)]
+    returns: dict = field(default_factory=dict)            # function qualname -> dotted name its last `return` evaluates to
     warnings: list = field(default_factory=list)
 
     def callers_of(self, qualname: str) -> list:
         return [c for c in self.calls if c.callee == qualname and c.caller != qualname]
+
+    def method_in_bases(self, class_qual: str, method: str, _depth: int = 0) -> Optional[str]:
+        """Resolve `class_qual.method` through the class's bases. Returns the first app method found,
+        or `<external base>.method` when the chain leaves the app (e.g. a subclass of yaml.SafeLoader)."""
+        info = self.functions.get(class_qual)
+        if info is None or not info.is_class or _depth > 8:
+            return None
+        for base in info.bases:
+            cand = f"{base}.{method}"
+            if cand in self.functions:
+                return cand
+            if base in self.functions:
+                found = self.method_in_bases(base, method, _depth + 1)
+                if found:
+                    return found
+            else:
+                return cand  # external base class: keep the dotted name rooted at the library
+        return None
 
     def imports_any(self, top_levels: list[str]) -> list:
         hits = []
@@ -125,7 +146,14 @@ class _ModuleAnalyzer:
                     base = self.resolve(node.args[0], scope)
                     return f"{base}.{node.args[1].value}" if base else None
                 return None  # dynamic getattr: value unknown (the call itself is recorded as a marker)
-            return self.resolve(node.func, scope)
+            target = self.resolve(node.func, scope)
+            if not target:
+                return None
+            # x = make_parser()  ->  x is the class make_parser() returns (one level, collected in pass 1).
+            ret = self.model.returns.get(target)
+            if ret and (self.model.functions.get(ret, FunctionInfo("", "", 0, 0)).is_class or ret.rsplit(".", 1)[-1][:1].isupper()):
+                return ret
+            return target
         return None
 
     def add_import_hit(self, top: str, line: int) -> None:
@@ -175,10 +203,30 @@ class _ModuleAnalyzer:
         if isinstance(node, ast.ClassDef):
             qual = f"{prefix}.{node.name}"
             scope[node.name] = qual
-            self.model.functions[qual] = FunctionInfo(qual, self.file, node.lineno, node.end_lineno or node.lineno, is_class=True)
+            bases = []
+            for b in node.bases:
+                resolved = self.resolve(b, scope)
+                bases.append(resolved or (b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "object")))
+            self.model.functions[qual] = FunctionInfo(qual, self.file, node.lineno, node.end_lineno or node.lineno,
+                                                      is_class=True, bases=bases)
+            for b in node.bases:
+                self.visit_expr(b, scope, caller)
             inner = dict(scope)
             self.visit_block(node.body, inner, qual, caller, class_qual=qual)
             return
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                self.visit_expr(item.context_expr, scope, caller)
+                if isinstance(item.optional_vars, ast.Name):
+                    resolved = self.resolve(item.context_expr, scope)
+                    if resolved:
+                        scope[item.optional_vars.id] = resolved
+            self.visit_block(node.body, scope, prefix, caller, class_qual)
+            return
+        if isinstance(node, ast.Return) and node.value is not None and caller:
+            resolved = self.resolve(node.value, scope)
+            if resolved and not resolved.startswith(caller + "."):
+                self.model.returns[caller] = resolved  # last return wins; used by pass 2
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = node.value
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -277,13 +325,14 @@ class _ModuleAnalyzer:
                 last = resolved.rsplit(".", 1)[-1]
         else:
             last, receiver = "<expr>", None
-        kwargs = {}
+        kwargs, kwargs_resolved = {}, {}
         for kw in call.keywords:
             if kw.arg:
                 try:
                     kwargs[kw.arg] = ast.unparse(kw.value)
                 except Exception:
                     kwargs[kw.arg] = "?"
+                kwargs_resolved[kw.arg] = self.resolve(kw.value, scope)
         # dynamic-feature markers
         if resolved in DYNAMIC_CALLS or last in ("getattr", "setattr", "eval", "exec", "__import__"):
             name = resolved or last
@@ -304,13 +353,31 @@ class _ModuleAnalyzer:
                 self.model.dynamic.append(DynamicMarker(kind, self.file, call.lineno, self.code_at(call.lineno)))
                 return
         self.model.calls.append(CallSite(caller=caller, callee=resolved, last_name=last, file=self.file,
-                                         line=call.lineno, code=self.code_at(call.lineno), kwargs=kwargs, receiver=receiver))
+                                         line=call.lineno, code=self.code_at(call.lineno), kwargs=kwargs, receiver=receiver,
+                                         kwargs_resolved=kwargs_resolved))
+
+
+def _resolve_inherited(model: AppModel) -> None:
+    """Post-pass: `self.m()` / `obj.m()` where m lives on a base class, or on an external base."""
+    for cs in model.calls:
+        if not cs.callee or cs.callee in model.functions:
+            continue
+        owner, _, method = cs.callee.rpartition(".")
+        if owner and method and owner in model.functions and model.functions[owner].is_class:
+            found = model.method_in_bases(owner, method)
+            if found:
+                cs.callee = found
 
 
 def build(root: Path) -> AppModel:
-    """Parse every .py file under root (and scan templates/config for symbol strings)."""
+    """Parse every .py file under root (and scan templates/config for symbol strings).
+
+    Two passes over the Python files: pass 1 only collects function return types so that
+    pass 2 can type `x = make_thing()`; pass 2 builds the real model.
+    """
     root = Path(root).resolve()
     model = AppModel(root=str(root))
+    parsed: list[tuple[str, str, str, ast.Module]] = []   # (module, rel, source, tree)
     for path in sorted(root.rglob("*")):
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
@@ -324,9 +391,12 @@ def build(root: Path) -> AppModel:
             except SyntaxError as exc:
                 model.warnings.append(f"{rel}: syntax error, skipped ({exc.msg} line {exc.lineno})")
                 continue
+            except (OSError, ValueError) as exc:
+                model.warnings.append(f"{rel}: unreadable, skipped ({exc})")
+                continue
             module = _module_name(root, path)
             model.modules[module] = rel
-            _ModuleAnalyzer(model, module, rel, source).analyze(tree)
+            parsed.append((module, rel, source, tree))
         elif path.suffix.lower() in TEMPLATE_SUFFIXES and path.stat().st_size < 2_000_000:
             try:
                 for i, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
@@ -337,4 +407,16 @@ def build(root: Path) -> AppModel:
                             model.strings.append(StringRef(rel, i, tok))
             except OSError:
                 pass
+
+    # Pass 1: return types only (into model.returns); everything else from this pass is discarded.
+    for module, rel, source, tree in parsed:
+        _ModuleAnalyzer(model, module, rel, source).analyze(tree)
+    returns = dict(model.returns)
+    model.functions, model.calls, model.dynamic, model.star_imports, model.imported_top_levels = {}, [], [], [], {}
+    model.strings = [s for s in model.strings if not s.file.endswith(".py")]
+    model.returns = returns
+    # Pass 2: the real model, now able to type `x = make_thing()`.
+    for module, rel, source, tree in parsed:
+        _ModuleAnalyzer(model, module, rel, source).analyze(tree)
+    _resolve_inherited(model)
     return model
