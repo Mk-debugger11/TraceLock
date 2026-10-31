@@ -14,6 +14,29 @@ from .models import ScanResult, VulnSpec
 __version__ = "0.1.0"
 
 
+def _dedupe_advisories(advisories: dict) -> dict:
+    """OSV returns the same vulnerability as GHSA-… and PYSEC-… records. Keep one per alias group,
+    preferring the GHSA record (richer references), and merge the other ids into its aliases."""
+    out: dict = {}
+    for name, advs in advisories.items():
+        groups: list = []
+        for adv in sorted(advs, key=lambda a: (not a.id.startswith("GHSA"), a.id)):
+            ids = {adv.id, *adv.aliases}
+            for group in groups:
+                if ids & group["ids"]:
+                    group["ids"] |= ids
+                    keep = group["adv"]
+                    keep.aliases = sorted((set(keep.aliases) | ids) - {keep.id})
+                    keep.fix_urls = list(dict.fromkeys(keep.fix_urls + adv.fix_urls))
+                    if not keep.details and adv.details:
+                        keep.details = adv.details
+                    break
+            else:
+                groups.append({"ids": ids, "adv": adv})
+        out[name] = [g["adv"] for g in groups]
+    return out
+
+
 def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_sources: bool = True) -> ScanResult:
     root = Path(root).resolve()
     t0 = time.time()
@@ -24,7 +47,7 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
     if not dependencies:
         result.warnings.append("no pinned dependencies found (requirements*.txt with name==version, or pyproject.toml)")
 
-    advisories = osv.lookup(dependencies, offline=offline)
+    advisories = _dedupe_advisories(osv.lookup(dependencies, offline=offline))
     app = app_graph.build(root)
     result.warnings.extend(app.warnings)
 
