@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Notes for {{ username }}</h1>
+  {% if forecast %}<p>Outside: {{ forecast.temperature }} &deg;C, wind {{ forecast.wind }} km/h</p>{% endif %}
+  <form method="post" action="{{ url_for('web.add_note') }}"><textarea name="text"></textarea><button>Save</button></form>
+  <ul>{% for note in notes %}<li>{{ note }}</li>{% endfor %}</ul>
+  <form method="post" action="{{ url_for('web.upload_avatar') }}" enctype="multipart/form-data">
+    <input type="file" name="avatar"><button>Upload avatar</button>
+  </form>
+  <form method="post" action="{{ url_for('web.logout') }}"><button>Log out</button></form>
+{% endblock %}

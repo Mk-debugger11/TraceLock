@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Notes</title></head>
+  <body>
+    {% with messages = get_flashed_messages() %}
+      {% for message in messages %}<p class="flash">{{ message }}</p>{% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </body>
+</html>
