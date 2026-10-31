@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.quiet:
-        print(report.render_terminal(result))
+        report.print_terminal(result)
     if args.json:
         args.json.write_text(report.to_json(result), encoding="utf-8")
     if args.vex:
