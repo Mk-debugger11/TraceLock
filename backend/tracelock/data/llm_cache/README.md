@@ -5,7 +5,14 @@ One JSON file per advisory id, written by `tracelock.kb.llm`: the raw model repl
 (`verified`, `verified_version`, `rejected`). `kb.resolve()` reads this before calling any model and,
 offline without the package source, reuses only `verified` names for the same version.
 
-Fill it for the seed advisories (needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or `TRACELOCK_LLM=ollama`):
+Fill it with a local open-weight model (nothing leaves the machine):
+
+    brew install ollama && ollama serve &          # once
+    ollama pull qwen2.5-coder:7b                   # ~4.7 GB; llama3.1:8b also works
+    export TRACELOCK_LLM=ollama                    # TRACELOCK_LLM_MODEL overrides the model
+
+or any OpenAI-compatible server hosting open models (`OPENAI_BASE_URL=https://api.groq.com/openai/v1`,
+`TRACELOCK_LLM_MODEL=llama-3.3-70b-versatile`, `OPENAI_API_KEY=...`), then:
 
     cd backend && python -m tracelock.kb.llm --seed            # all curated advisories
     cd backend && python -m tracelock.kb.llm --seed CVE-2024-47081
