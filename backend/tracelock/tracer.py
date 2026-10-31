@@ -103,8 +103,12 @@ def run_trace(root: Path, targets: list[str], command: list[str], timeout: int =
         env["TRACELOCK_TARGETS"] = ",".join(targets)
         env["TRACELOCK_OUT"] = str(out)
         cmd = list(command)
-        if cmd[0] in ("python", "python3") and python:
-            cmd[0] = python
+        if "/" in cmd[0] and not os.path.isabs(cmd[0]):
+            cmd[0] = os.path.abspath(cmd[0])   # ./venv/bin/python is relative to where the user is, not to the app
+        if cmd[0] in ("python", "python3"):
+            # Use the interpreter running TraceLock (the venv with the pinned dependencies), not whatever
+            # `python` resolves to on PATH; a conda base with a newer library version would mislead the trace.
+            cmd[0] = python or sys.executable
         try:
             proc = subprocess.run(cmd, cwd=str(root), env=env, capture_output=True, text=True, timeout=timeout)
             returncode, stderr = proc.returncode, proc.stderr[-2000:]
