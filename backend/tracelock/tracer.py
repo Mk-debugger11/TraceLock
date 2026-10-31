@@ -74,6 +74,19 @@ threading.setprofile(_prof)
 '''
 
 
+def _short_library_path(path: str) -> str:
+    """Absolute library frame -> '<package>/file.py' so reports never leak local directories."""
+    norm = path.replace("\\", "/")
+    for marker in ("site-packages/", "dist-packages/", ".tracelock/cache/src/", "data/wheels/"):
+        if marker in norm:
+            tail = norm.split(marker)[-1]
+            if marker.endswith("src/"):           # cache/src/<name>-<ver>/pkg/file.py -> pkg/file.py
+                tail = tail.split("/", 1)[-1] if "/" in tail else tail
+            return tail
+    parts = norm.rsplit("/", 2)
+    return "/".join(parts[-2:]) if len(parts) >= 2 else norm
+
+
 def run_trace(root: Path, targets: list[str], command: list[str], timeout: int = 60,
               python: Optional[str] = None) -> Optional[dict]:
     """Execute `command` inside `root` with the profiler installed. Returns the trace dict, or None if it could not run."""
@@ -112,7 +125,7 @@ def run_trace(root: Path, targets: list[str], command: list[str], timeout: int =
             try:
                 s["file"] = str(Path(s["file"]).resolve().relative_to(root))
             except ValueError:
-                s["file"] = "site-packages/" + s["file"].split("site-packages/")[-1] if "site-packages/" in s["file"] else s["file"]
+                s["file"] = _short_library_path(s["file"])
         hit["stack"] = trimmed
     stack = hits[0]["stack"] if hits else []
     return {
