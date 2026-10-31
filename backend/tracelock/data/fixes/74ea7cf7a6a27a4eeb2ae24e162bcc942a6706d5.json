@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/psf/requests/commit/74ea7cf7a6a27a4eeb2ae24e162bcc942a6706d5",
+ "owner": "psf",
+ "repo": "requests",
+ "sha": "74ea7cf7a6a27a4eeb2ae24e162bcc942a6706d5",
+ "qualnames": [
+  "requests.sessions.SessionRedirectMixin.rebuild_proxies"
+ ],
+ "files": [
+  {
+   "path": "requests/sessions.py",
+   "module": "requests.sessions",
+   "prefix_source": "git",
+   "functions": [
+    "requests.sessions.SessionRedirectMixin.rebuild_proxies"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "requests/sessions.py",
+   "header": "@@ -324,7 +324,9 @@ def rebuild_proxies(self, prepared_request, proxies):",
+   "functions": [
+    "requests.sessions.SessionRedirectMixin.rebuild_proxies"
+   ],
+   "text": "@@ -324,7 +324,9 @@ def rebuild_proxies(self, prepared_request, proxies):\n         except KeyError:\n             username, password = None, None\n \n-        if username and password:\n+        # urllib3 handles proxy authorization for us in the standard adapter.\n+        # Avoid appending this to TLS tunneled requests where it may be leaked.\n+        if not scheme.startswith('https') and username and password:\n             headers[\"Proxy-Authorization\"] = _basic_auth_str(username, password)\n \n         return new_proxies"
+  }
+ ]
+}

@@ -1,0 +1,59 @@
+diff --git a/Tests/test_imagemath.py b/Tests/test_imagemath.py
+index e7afd1abf47..25811aa89d7 100644
+--- a/Tests/test_imagemath.py
++++ b/Tests/test_imagemath.py
+@@ -1,3 +1,5 @@
++import pytest
++
+ from PIL import Image, ImageMath
+ 
+ 
+@@ -50,6 +52,11 @@ def test_ops():
+     assert pixel(ImageMath.eval("float(B)**33", images)) == "F 8589934592.0"
+ 
+ 
++def test_prevent_exec():
++    with pytest.raises(ValueError):
++        ImageMath.eval("exec('pass')")
++
++
+ def test_logical():
+     assert pixel(ImageMath.eval("not A", images)) == 0
+     assert pixel(ImageMath.eval("A and B", images)) == "L 2"
+diff --git a/docs/releasenotes/9.0.0.rst b/docs/releasenotes/9.0.0.rst
+index e778b20b6f6..fb542636e93 100644
+--- a/docs/releasenotes/9.0.0.rst
++++ b/docs/releasenotes/9.0.0.rst
+@@ -116,6 +116,14 @@ To prevent attempts to slow down loading times for images, if an image has conse
+ duplicate tiles that only differ by their offset, only load the last tile. Credit to
+ Google's `OSS-Fuzz`_ project for finding this issue.
+ 
++Restrict builtins available to ImageMath.eval
++^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++
++To limit :py:class:`PIL.ImageMath` to working with images, Pillow will now restrict the
++builtins available to :py:meth:`PIL.ImageMath.eval`. This will help prevent problems
++arising if users evaluate arbitrary expressions, such as
++``ImageMath.eval("exec(exit())")``.
++
+ Fixed ImagePath.Path array handling
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
+diff --git a/src/PIL/ImageMath.py b/src/PIL/ImageMath.py
+index 7f9c88e14c9..06bea800de2 100644
+--- a/src/PIL/ImageMath.py
++++ b/src/PIL/ImageMath.py
+@@ -246,7 +246,12 @@ def eval(expression, _dict={}, **kw):
+         if hasattr(v, "im"):
+             args[k] = _Operand(v)
+ 
+-    out = builtins.eval(expression, args)
++    code = compile(expression, "<string>", "eval")
++    for name in code.co_names:
++        if name not in args and name != "abs":
++            raise ValueError(f"'{name}' not allowed")
++
++    out = builtins.eval(expression, {"__builtins": {"abs": abs}}, args)
+     try:
+         return out.im
+     except AttributeError:

@@ -1,0 +1,119 @@
+{
+ "commit_url": "https://github.com/pallets/werkzeug/commit/517cac5a804e8c4dc4ed038bb20dacd038e7a9f1",
+ "owner": "pallets",
+ "repo": "werkzeug",
+ "sha": "517cac5a804e8c4dc4ed038bb20dacd038e7a9f1",
+ "qualnames": [
+  "werkzeug.formparser.FormDataParser.__init__",
+  "werkzeug.formparser.FormDataParser._parse_multipart",
+  "werkzeug.formparser.MultiPartParser.__init__",
+  "werkzeug.formparser.MultiPartParser.parse",
+  "werkzeug.sansio.multipart.MultipartDecoder.__init__",
+  "werkzeug.sansio.multipart.MultipartDecoder.next_event",
+  "werkzeug.wrappers.request.Request.make_form_data_parser"
+ ],
+ "files": [
+  {
+   "path": "src/werkzeug/formparser.py",
+   "module": "werkzeug.formparser",
+   "prefix_source": "git",
+   "functions": [
+    "werkzeug.formparser.FormDataParser.__init__",
+    "werkzeug.formparser.FormDataParser._parse_multipart",
+    "werkzeug.formparser.MultiPartParser.__init__",
+    "werkzeug.formparser.MultiPartParser.parse"
+   ]
+  },
+  {
+   "path": "src/werkzeug/sansio/multipart.py",
+   "module": "werkzeug.sansio.multipart",
+   "prefix_source": "git",
+   "functions": [
+    "werkzeug.sansio.multipart.MultipartDecoder.__init__",
+    "werkzeug.sansio.multipart.MultipartDecoder.next_event"
+   ]
+  },
+  {
+   "path": "src/werkzeug/wrappers/request.py",
+   "module": "werkzeug.wrappers.request",
+   "prefix_source": "git",
+   "functions": [
+    "werkzeug.wrappers.request.Request.make_form_data_parser"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/werkzeug/formparser.py",
+   "header": "@@ -190,6 +192,8 @@ def __init__(",
+   "functions": [
+    "werkzeug.formparser.FormDataParser.__init__"
+   ],
+   "text": "@@ -190,6 +192,8 @@ def __init__(\n         max_content_length: t.Optional[int] = None,\n         cls: t.Optional[t.Type[MultiDict]] = None,\n         silent: bool = True,\n+        *,\n+        max_form_parts: t.Optional[int] = None,\n     ) -> None:\n         if stream_factory is None:\n             stream_factory = default_stream_factory"
+  },
+  {
+   "path": "src/werkzeug/formparser.py",
+   "header": "@@ -199,6 +203,7 @@ def __init__(",
+   "functions": [
+    "werkzeug.formparser.FormDataParser.__init__"
+   ],
+   "text": "@@ -199,6 +203,7 @@ def __init__(\n         self.errors = errors\n         self.max_form_memory_size = max_form_memory_size\n         self.max_content_length = max_content_length\n+        self.max_form_parts = max_form_parts\n \n         if cls is None:\n             cls = MultiDict"
+  },
+  {
+   "path": "src/werkzeug/formparser.py",
+   "header": "@@ -281,6 +286,7 @@ def _parse_multipart(",
+   "functions": [
+    "werkzeug.formparser.FormDataParser._parse_multipart"
+   ],
+   "text": "@@ -281,6 +286,7 @@ def _parse_multipart(\n             self.errors,\n             max_form_memory_size=self.max_form_memory_size,\n             cls=self.cls,\n+            max_form_parts=self.max_form_parts,\n         )\n         boundary = options.get(\"boundary\", \"\").encode(\"ascii\")\n "
+  },
+  {
+   "path": "src/werkzeug/formparser.py",
+   "header": "@@ -346,10 +352,12 @@ def __init__(",
+   "functions": [
+    "werkzeug.formparser.MultiPartParser.__init__"
+   ],
+   "text": "@@ -346,10 +352,12 @@ def __init__(\n         max_form_memory_size: t.Optional[int] = None,\n         cls: t.Optional[t.Type[MultiDict]] = None,\n         buffer_size: int = 64 * 1024,\n+        max_form_parts: t.Optional[int] = None,\n     ) -> None:\n         self.charset = charset\n         self.errors = errors\n         self.max_form_memory_size = max_form_memory_size\n+        self.max_form_parts = max_form_parts\n \n         if stream_factory is None:\n             stream_factory = default_stream_factory"
+  },
+  {
+   "path": "src/werkzeug/formparser.py",
+   "header": "@@ -409,7 +417,9 @@ def parse(",
+   "functions": [
+    "werkzeug.formparser.MultiPartParser.parse"
+   ],
+   "text": "@@ -409,7 +417,9 @@ def parse(\n             [None],\n         )\n \n-        parser = MultipartDecoder(boundary, self.max_form_memory_size)\n+        parser = MultipartDecoder(\n+            boundary, self.max_form_memory_size, max_parts=self.max_form_parts\n+        )\n \n         fields = []\n         files = []"
+  },
+  {
+   "path": "src/werkzeug/sansio/multipart.py",
+   "header": "@@ -87,10 +87,13 @@ def __init__(",
+   "functions": [
+    "werkzeug.sansio.multipart.MultipartDecoder.__init__"
+   ],
+   "text": "@@ -87,10 +87,13 @@ def __init__(\n         self,\n         boundary: bytes,\n         max_form_memory_size: Optional[int] = None,\n+        *,\n+        max_parts: Optional[int] = None,\n     ) -> None:\n         self.buffer = bytearray()\n         self.complete = False\n         self.max_form_memory_size = max_form_memory_size\n+        self.max_parts = max_parts\n         self.state = State.PREAMBLE\n         self.boundary = boundary\n "
+  },
+  {
+   "path": "src/werkzeug/sansio/multipart.py",
+   "header": "@@ -118,6 +121,7 @@ def __init__(",
+   "functions": [
+    "werkzeug.sansio.multipart.MultipartDecoder.__init__"
+   ],
+   "text": "@@ -118,6 +121,7 @@ def __init__(\n             re.MULTILINE,\n         )\n         self._search_position = 0\n+        self._parts_decoded = 0\n \n     def last_newline(self) -> int:\n         try:"
+  },
+  {
+   "path": "src/werkzeug/sansio/multipart.py",
+   "header": "@@ -191,6 +195,10 @@ def next_event(self) -> Event:",
+   "functions": [
+    "werkzeug.sansio.multipart.MultipartDecoder.next_event"
+   ],
+   "text": "@@ -191,6 +195,10 @@ def next_event(self) -> Event:\n                     )\n                 self.state = State.DATA\n                 self._search_position = 0\n+                self._parts_decoded += 1\n+\n+                if self.max_parts is not None and self._parts_decoded > self.max_parts:\n+                    raise RequestEntityTooLarge()\n             else:\n                 # Update the search start position to be equal to the\n                 # current buffer length (already searched) minus a"
+  },
+  {
+   "path": "src/werkzeug/wrappers/request.py",
+   "header": "@@ -246,6 +253,7 @@ def make_form_data_parser(self) -> FormDataParser:",
+   "functions": [
+    "werkzeug.wrappers.request.Request.make_form_data_parser"
+   ],
+   "text": "@@ -246,6 +253,7 @@ def make_form_data_parser(self) -> FormDataParser:\n             self.max_form_memory_size,\n             self.max_content_length,\n             self.parameter_storage_class,\n+            max_form_parts=self.max_form_parts,\n         )\n \n     def _load_form_data(self) -> None:"
+  }
+ ]
+}

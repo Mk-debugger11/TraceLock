@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/psf/requests/commit/a58d7f2ffb4d00b46dca2d70a3932a0b37e22fac",
+ "owner": "psf",
+ "repo": "requests",
+ "sha": "a58d7f2ffb4d00b46dca2d70a3932a0b37e22fac",
+ "qualnames": [
+  "requests.adapters.HTTPAdapter.send"
+ ],
+ "files": [
+  {
+   "path": "src/requests/adapters.py",
+   "module": "requests.adapters",
+   "prefix_source": "git",
+   "functions": [
+    "requests.adapters.HTTPAdapter.send"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/requests/adapters.py",
+   "header": "@@ -453,7 +509,7 @@ def send(",
+   "functions": [
+    "requests.adapters.HTTPAdapter.send"
+   ],
+   "text": "@@ -453,7 +509,7 @@ def send(\n         \"\"\"\n \n         try:\n-            conn = self.get_connection(request.url, proxies)\n+            conn = self._get_connection(request, verify, proxies)\n         except LocationValueError as e:\n             raise InvalidURL(e, request=request)\n "
+  }
+ ]
+}

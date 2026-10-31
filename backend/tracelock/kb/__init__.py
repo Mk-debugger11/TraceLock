@@ -3,6 +3,10 @@
 Tier order: curated -> ecosystem_specific -> fix_commit -> llm_verified -> none.
 Tiers merge (a curated safe_usage rule survives when the fix-commit tier adds
 functions). `resolve()` is the only function other modules call.
+
+A fix_commit spec is only kept when something maps it to public API (LLM-verified entry_api,
+or a library caller from lib_graph.exposure_set); otherwise it is reported as tier none with
+the functions kept, so it can produce REACHABLE but never a false NOT_REACHABLE.
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from typing import Optional
 
 from ..models import (TIER_CURATED, TIER_ECOSYSTEM, TIER_FIX_COMMIT, TIER_LLM, TIER_NONE,
                       Advisory, Dependency, VulnSpec)
+from .. import lib_graph
 from . import fixdiff, llm
 
 CURATED_PATH = Path(__file__).parent / "curated.json"
@@ -63,10 +68,18 @@ def resolve(adv: Advisory, dep: Dependency, lib_src: Optional[Path] = None, offl
     if spec is None:
         spec = VulnSpec(advisory_id=adv.id, package=dep.name, tier=TIER_NONE, confidence=0.0)
 
-    # Fix-commit tier adds candidate functions when we have no curated internal list.
-    if not spec.vulnerable_funcs and adv.fix_urls and not offline:
+    # Curated entries carry their fix diff as evidence when data/fixes has it (no network).
+    if spec.fix_commit and not spec.evidence_hunks:
         try:
-            funcs, hunks, commit = fixdiff.functions_from_fix(adv, dep)
+            spec.evidence_hunks = fixdiff.cached_hunks(spec.fix_commit, dep)
+        except Exception:
+            pass
+
+    # Fix-commit tier adds candidate functions when we have no curated internal list.
+    # Offline it still runs from results committed in data/fixes/ (fixdiff never fetches then).
+    if not spec.vulnerable_funcs and (adv.fix_urls or adv.raw.get("references")):
+        try:
+            funcs, hunks, commit = fixdiff.functions_from_fix(adv, dep, offline=offline)
         except Exception as exc:  # network or parse failure: stay honest, do not guess
             funcs, hunks, commit = [], [], None
             spec.notes = (spec.notes + f" fixdiff failed: {exc}").strip()
@@ -77,15 +90,41 @@ def resolve(adv: Advisory, dep: Dependency, lib_src: Optional[Path] = None, offl
             if spec.tier == TIER_NONE:
                 spec.tier, spec.confidence = TIER_FIX_COMMIT, 0.7
 
-    # LLM tier proposes public entry points; every name must exist in the library source.
-    if spec.vulnerable_funcs and not spec.entry_api and lib_src is not None and not offline:
-        try:
-            proposed = llm.propose_entry_api(adv, dep, spec, lib_src)
-        except Exception:
-            proposed = []
-        verified = [name for name in proposed if llm.symbol_exists(lib_src, dep, name)]
+    # LLM tier proposes public entry points; every name must exist in the library source
+    # ("LLM proposes, AST verifies"). Cache first, so offline runs reuse earlier answers; without
+    # the source only names already verified against this exact version are reused.
+    if spec.vulnerable_funcs and not spec.entry_api:
+        verified: list[str] = []
+        if lib_src is not None:
+            try:
+                proposed = llm.propose_entry_api(adv, dep, spec, lib_src, offline=offline)
+            except Exception:
+                proposed = []
+            verified = [name for name in proposed if llm.symbol_exists(lib_src, dep, name)]
+            if proposed:
+                llm.record_verified(adv, dep, verified)
+        else:
+            verified = llm.cached_verified(adv, dep)
         if verified:
             spec.entry_api = verified
             if spec.tier == TIER_FIX_COMMIT:
                 spec.tier, spec.confidence = TIER_LLM, 0.6
+
+    # Safety net: fix-commit functions are internal (FullConstructor.construct_python_object_new).
+    # Without a public entry point (no curated/LLM entry_api, and no library caller found by
+    # lib_graph) an app that only calls yaml.load would look clean, so a missing call proves
+    # nothing. Keep the functions (a direct call is still REACHABLE) but report no usable
+    # function data, which the verdict engine turns into UNCERTAIN instead of NOT_REACHABLE.
+    if spec.tier == TIER_FIX_COMMIT and not spec.entry_api:
+        callers: set = set()
+        if lib_src is not None:
+            try:
+                callers = {n for n in lib_graph.exposure_set(lib_src, spec) if n not in spec.vulnerable_funcs}
+            except Exception:
+                callers = set()
+        if not callers:
+            spec.tier, spec.confidence = TIER_NONE, 0.0
+            spec.notes = (spec.notes + " Fix commit " + (spec.fix_commit or "") + " changes "
+                          + ", ".join(spec.vulnerable_funcs[:4]) + ("..." if len(spec.vulnerable_funcs) > 4 else "")
+                          + "; no public entry point is known yet, so absence of a call cannot be proven.").strip()
     return spec

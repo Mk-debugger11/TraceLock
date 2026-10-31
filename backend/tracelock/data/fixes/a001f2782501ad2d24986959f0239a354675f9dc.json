@@ -1,0 +1,40 @@
+{
+ "commit_url": "https://github.com/yaml/pyyaml/commit/a001f2782501ad2d24986959f0239a354675f9dc",
+ "owner": "yaml",
+ "repo": "pyyaml",
+ "sha": "a001f2782501ad2d24986959f0239a354675f9dc",
+ "qualnames": [
+  "yaml.constructor.FullConstructor.construct_python_module",
+  "yaml.constructor.FullConstructor.construct_python_object",
+  "yaml.constructor.FullConstructor.construct_python_object_new"
+ ],
+ "files": [
+  {
+   "path": "lib/yaml/constructor.py",
+   "module": "yaml.constructor",
+   "error": "pre-fix file does not parse: multiple exception types must be parenthesized"
+  },
+  {
+   "path": "lib3/yaml/constructor.py",
+   "module": "yaml.constructor",
+   "prefix_source": "git",
+   "functions": [
+    "yaml.constructor.FullConstructor.construct_python_module",
+    "yaml.constructor.FullConstructor.construct_python_object",
+    "yaml.constructor.FullConstructor.construct_python_object_new"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "lib3/yaml/constructor.py",
+   "header": "@@ -710,18 +710,6 @@ def construct_python_object_new(self, suffix, node):",
+   "functions": [
+    "yaml.constructor.FullConstructor.construct_python_module",
+    "yaml.constructor.FullConstructor.construct_python_object",
+    "yaml.constructor.FullConstructor.construct_python_object_new"
+   ],
+   "text": "@@ -710,18 +710,6 @@ def construct_python_object_new(self, suffix, node):\n     'tag:yaml.org,2002:python/name:',\n     FullConstructor.construct_python_name)\n \n-FullConstructor.add_multi_constructor(\n-    'tag:yaml.org,2002:python/module:',\n-    FullConstructor.construct_python_module)\n-\n-FullConstructor.add_multi_constructor(\n-    'tag:yaml.org,2002:python/object:',\n-    FullConstructor.construct_python_object)\n-\n-FullConstructor.add_multi_constructor(\n-    'tag:yaml.org,2002:python/object/new:',\n-    FullConstructor.construct_python_object_new)\n-\n class UnsafeConstructor(FullConstructor):\n \n     def find_python_module(self, name, mark):"
+  }
+ ]
+}

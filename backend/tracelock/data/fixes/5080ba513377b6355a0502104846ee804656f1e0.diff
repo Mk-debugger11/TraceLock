@@ -1,0 +1,252 @@
+diff --git a/lib/yaml/constructor.py b/lib/yaml/constructor.py
+index 8ce39722d..794681cb7 100644
+--- a/lib/yaml/constructor.py
++++ b/lib/yaml/constructor.py
+@@ -56,6 +56,14 @@ def check_data(self):
+         # If there are more documents available?
+         return self.check_node()
+ 
++    def check_state_key(self, key):
++        """Block special attributes/methods from being set in a newly created
++        object, to prevent user-controlled methods from being called during
++        deserialization"""
++        if self.get_state_keys_blacklist_regexp().match(key):
++            raise ConstructorError(None, None,
++                "blacklisted key '%s' in instance state found" % (key,), None)
++
+     def get_data(self):
+         # Construct and return the next document.
+         if self.check_node():
+@@ -495,6 +503,16 @@ def construct_undefined(self, node):
+         SafeConstructor.construct_undefined)
+ 
+ class FullConstructor(SafeConstructor):
++    # 'extend' is blacklisted because it is used by
++    # construct_python_object_apply to add `listitems` to a newly generate
++    # python instance
++    def get_state_keys_blacklist(self):
++        return ['^extend$', '^__.*__$']
++
++    def get_state_keys_blacklist_regexp(self):
++        if not hasattr(self, 'state_keys_blacklist_regexp'):
++            self.state_keys_blacklist_regexp = re.compile('(' + '|'.join(self.get_state_keys_blacklist()) + ')')
++        return self.state_keys_blacklist_regexp
+ 
+     def construct_python_str(self, node):
+         return self.construct_scalar(node).encode('utf-8')
+@@ -590,7 +608,7 @@ def make_python_instance(self, suffix, node,
+         else:
+             return cls(*args, **kwds)
+ 
+-    def set_python_instance_state(self, instance, state):
++    def set_python_instance_state(self, instance, state, unsafe=False):
+         if hasattr(instance, '__setstate__'):
+             instance.__setstate__(state)
+         else:
+@@ -598,10 +616,15 @@ def set_python_instance_state(self, instance, state):
+             if isinstance(state, tuple) and len(state) == 2:
+                 state, slotstate = state
+             if hasattr(instance, '__dict__'):
++                if not unsafe and state:
++                    for key in state.keys():
++                        self.check_state_key(key)
+                 instance.__dict__.update(state)
+             elif state:
+                 slotstate.update(state)
+             for key, value in slotstate.items():
++                if not unsafe:
++                    self.check_state_key(key)
+                 setattr(instance, key, value)
+ 
+     def construct_python_object(self, suffix, node):
+@@ -723,6 +746,10 @@ def make_python_instance(self, suffix, node, args=None, kwds=None, newobj=False)
+         return super(UnsafeConstructor, self).make_python_instance(
+             suffix, node, args, kwds, newobj, unsafe=True)
+ 
++    def set_python_instance_state(self, instance, state):
++        return super(UnsafeConstructor, self).set_python_instance_state(
++            instance, state, unsafe=True)
++
+ UnsafeConstructor.add_multi_constructor(
+     u'tag:yaml.org,2002:python/object/apply:',
+     UnsafeConstructor.construct_python_object_apply)
+diff --git a/lib3/yaml/constructor.py b/lib3/yaml/constructor.py
+index cd9167eaf..1948b125c 100644
+--- a/lib3/yaml/constructor.py
++++ b/lib3/yaml/constructor.py
+@@ -31,6 +31,14 @@ def check_data(self):
+         # If there are more documents available?
+         return self.check_node()
+ 
++    def check_state_key(self, key):
++        """Block special attributes/methods from being set in a newly created
++        object, to prevent user-controlled methods from being called during
++        deserialization"""
++        if self.get_state_keys_blacklist_regexp().match(key):
++            raise ConstructorError(None, None,
++                "blacklisted key '%s' in instance state found" % (key,), None)
++
+     def get_data(self):
+         # Construct and return the next document.
+         if self.check_node():
+@@ -472,6 +480,16 @@ def construct_undefined(self, node):
+         SafeConstructor.construct_undefined)
+ 
+ class FullConstructor(SafeConstructor):
++    # 'extend' is blacklisted because it is used by
++    # construct_python_object_apply to add `listitems` to a newly generate
++    # python instance
++    def get_state_keys_blacklist(self):
++        return ['^extend$', '^__.*__$']
++
++    def get_state_keys_blacklist_regexp(self):
++        if not hasattr(self, 'state_keys_blacklist_regexp'):
++            self.state_keys_blacklist_regexp = re.compile('(' + '|'.join(self.get_state_keys_blacklist()) + ')')
++        return self.state_keys_blacklist_regexp
+ 
+     def construct_python_str(self, node):
+         return self.construct_scalar(node)
+@@ -574,7 +592,7 @@ def make_python_instance(self, suffix, node,
+         else:
+             return cls(*args, **kwds)
+ 
+-    def set_python_instance_state(self, instance, state):
++    def set_python_instance_state(self, instance, state, unsafe=False):
+         if hasattr(instance, '__setstate__'):
+             instance.__setstate__(state)
+         else:
+@@ -582,10 +600,15 @@ def set_python_instance_state(self, instance, state):
+             if isinstance(state, tuple) and len(state) == 2:
+                 state, slotstate = state
+             if hasattr(instance, '__dict__'):
++                if not unsafe and state:
++                    for key in state.keys():
++                        self.check_state_key(key)
+                 instance.__dict__.update(state)
+             elif state:
+                 slotstate.update(state)
+             for key, value in slotstate.items():
++                if not unsafe:
++                    self.check_state_key(key)
+                 setattr(instance, key, value)
+ 
+     def construct_python_object(self, suffix, node):
+@@ -711,6 +734,10 @@ def make_python_instance(self, suffix, node, args=None, kwds=None, newobj=False)
+         return super(UnsafeConstructor, self).make_python_instance(
+             suffix, node, args, kwds, newobj, unsafe=True)
+ 
++    def set_python_instance_state(self, instance, state):
++        return super(UnsafeConstructor, self).set_python_instance_state(
++            instance, state, unsafe=True)
++
+ UnsafeConstructor.add_multi_constructor(
+     'tag:yaml.org,2002:python/object/apply:',
+     UnsafeConstructor.construct_python_object_apply)
+diff --git a/tests/data/myfullloader.subclass_blacklist b/tests/data/myfullloader.subclass_blacklist
+new file mode 100644
+index 000000000..555a2b3a3
+--- /dev/null
++++ b/tests/data/myfullloader.subclass_blacklist
+@@ -0,0 +1,5 @@
++- !!python/object/new:yaml.MappingNode
++  args:
++  state:
++    mymethod: test
++    wrong_method: test2
+diff --git a/tests/data/overwrite-state-new-constructor.loader-error b/tests/data/overwrite-state-new-constructor.loader-error
+new file mode 100644
+index 000000000..8d224f157
+--- /dev/null
++++ b/tests/data/overwrite-state-new-constructor.loader-error
+@@ -0,0 +1,5 @@
++- !!python/object/new:yaml.MappingNode
++  args:
++  state:
++    extend: test
++    __test__: test
+diff --git a/tests/lib/test_constructor.py b/tests/lib/test_constructor.py
+index a22fd1891..5a8cce219 100644
+--- a/tests/lib/test_constructor.py
++++ b/tests/lib/test_constructor.py
+@@ -17,7 +17,7 @@ def _make_objects():
+     global MyLoader, MyDumper, MyTestClass1, MyTestClass2, MyTestClass3, YAMLObject1, YAMLObject2,  \
+             AnObject, AnInstance, AState, ACustomState, InitArgs, InitArgsWithState,    \
+             NewArgs, NewArgsWithState, Reduce, ReduceWithState, Slots, MyInt, MyList, MyDict,  \
+-            FixedOffset, today, execute
++            FixedOffset, today, execute, MyFullLoader
+ 
+     class MyLoader(yaml.Loader):
+         pass
+@@ -235,6 +235,10 @@ def tzname(self, dt):
+         def dst(self, dt):
+             return datetime.timedelta(0)
+ 
++    class MyFullLoader(yaml.FullLoader):
++        def get_state_keys_blacklist(self):
++            return super(MyFullLoader, self).get_state_keys_blacklist() + ['^mymethod$', '^wrong_.*$']
++
+     today = datetime.date.today()
+ 
+ def _load_code(expression):
+@@ -289,6 +293,18 @@ def test_constructor_types(data_filename, code_filename, verbose=False):
+ 
+ test_constructor_types.unittest = ['.data', '.code']
+ 
++def test_subclass_blacklist_types(data_filename, verbose=False):
++    _make_objects()
++    try:
++        yaml.load(open(data_filename, 'rb').read(), MyFullLoader)
++    except yaml.YAMLError as exc:
++        if verbose:
++            print("%s:" % exc.__class__.__name__, exc)
++    else:
++        raise AssertionError("expected an exception")
++
++test_subclass_blacklist_types.unittest = ['.subclass_blacklist']
++
+ if __name__ == '__main__':
+     import sys, test_constructor
+     sys.modules['test_constructor'] = sys.modules['__main__']
+diff --git a/tests/lib3/test_constructor.py b/tests/lib3/test_constructor.py
+index 877982db8..f9a507701 100644
+--- a/tests/lib3/test_constructor.py
++++ b/tests/lib3/test_constructor.py
+@@ -14,7 +14,7 @@ def _make_objects():
+     global MyLoader, MyDumper, MyTestClass1, MyTestClass2, MyTestClass3, YAMLObject1, YAMLObject2,  \
+             AnObject, AnInstance, AState, ACustomState, InitArgs, InitArgsWithState,    \
+             NewArgs, NewArgsWithState, Reduce, ReduceWithState, Slots, MyInt, MyList, MyDict,  \
+-            FixedOffset, today, execute
++            FixedOffset, today, execute, MyFullLoader
+ 
+     class MyLoader(yaml.Loader):
+         pass
+@@ -222,6 +222,10 @@ def tzname(self, dt):
+         def dst(self, dt):
+             return datetime.timedelta(0)
+ 
++    class MyFullLoader(yaml.FullLoader):
++        def get_state_keys_blacklist(self):
++            return super().get_state_keys_blacklist() + ['^mymethod$', '^wrong_.*$']
++
+     today = datetime.date.today()
+ 
+ def _load_code(expression):
+@@ -274,6 +278,18 @@ def test_constructor_types(data_filename, code_filename, verbose=False):
+ 
+ test_constructor_types.unittest = ['.data', '.code']
+ 
++def test_subclass_blacklist_types(data_filename, verbose=False):
++    _make_objects()
++    try:
++        yaml.load(open(data_filename, 'rb').read(), MyFullLoader)
++    except yaml.YAMLError as exc:
++        if verbose:
++            print("%s:" % exc.__class__.__name__, exc)
++    else:
++        raise AssertionError("expected an exception")
++
++test_subclass_blacklist_types.unittest = ['.subclass_blacklist']
++
+ if __name__ == '__main__':
+     import sys, test_constructor
+     sys.modules['test_constructor'] = sys.modules['__main__']

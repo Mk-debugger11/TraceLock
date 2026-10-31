@@ -1,0 +1,52 @@
+{
+ "commit_url": "https://github.com/urllib3/urllib3/commit/4e50fbc5db74e32cabd5ccc1ab81fc103adfe0b3",
+ "owner": "urllib3",
+ "repo": "urllib3",
+ "sha": "4e50fbc5db74e32cabd5ccc1ab81fc103adfe0b3",
+ "qualnames": [
+  "urllib3.connectionpool.HTTPConnectionPool.urlopen",
+  "urllib3.poolmanager.PoolManager.urlopen"
+ ],
+ "files": [
+  {
+   "path": "src/urllib3/_collections.py",
+   "module": "urllib3._collections",
+   "prefix_source": "git",
+   "functions": []
+  },
+  {
+   "path": "src/urllib3/connectionpool.py",
+   "module": "urllib3.connectionpool",
+   "prefix_source": "git",
+   "functions": [
+    "urllib3.connectionpool.HTTPConnectionPool.urlopen"
+   ]
+  },
+  {
+   "path": "src/urllib3/poolmanager.py",
+   "module": "urllib3.poolmanager",
+   "prefix_source": "git",
+   "functions": [
+    "urllib3.poolmanager.PoolManager.urlopen"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/urllib3/connectionpool.py",
+   "header": "@@ -893,7 +894,11 @@ def urlopen(  # type: ignore[override]",
+   "functions": [
+    "urllib3.connectionpool.HTTPConnectionPool.urlopen"
+   ],
+   "text": "@@ -893,7 +894,11 @@ def urlopen(  # type: ignore[override]\n         redirect_location = redirect and response.get_redirect_location()\n         if redirect_location:\n             if response.status == 303:\n+                # Change the method according to RFC 9110, Section 15.4.4.\n                 method = \"GET\"\n+                # And lose the body not to transfer anything sensitive.\n+                body = None\n+                headers = HTTPHeaderDict(headers)._prepare_for_method_change()\n \n             try:\n                 retries = retries.increment(method, url, response=response, _pool=self)"
+  },
+  {
+   "path": "src/urllib3/poolmanager.py",
+   "header": "@@ -449,9 +449,12 @@ def urlopen(  # type: ignore[override]",
+   "functions": [
+    "urllib3.poolmanager.PoolManager.urlopen"
+   ],
+   "text": "@@ -449,9 +449,12 @@ def urlopen(  # type: ignore[override]\n         # Support relative URLs for redirecting.\n         redirect_location = urljoin(url, redirect_location)\n \n-        # RFC 7231, Section 6.4.4\n         if response.status == 303:\n+            # Change the method according to RFC 9110, Section 15.4.4.\n             method = \"GET\"\n+            # And lose the body not to transfer anything sensitive.\n+            kw[\"body\"] = None\n+            kw[\"headers\"] = HTTPHeaderDict(kw[\"headers\"])._prepare_for_method_change()\n \n         retries = kw.get(\"retries\")\n         if not isinstance(retries, Retry):"
+  }
+ ]
+}

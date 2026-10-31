@@ -1,0 +1,11 @@
+$ cd backend && python -m tracelock.cli scan ../benchmark/real_flask_app --offline
+...
+NOT_REACHABLE GHSA-8q59-q68h-6hv4  pyyaml 5.3 -> fixed 5.4    confidence 0.85
+  aliases:   CVE-2020-14343, PYSEC-2021-142
+  summary:   Improper Input Validation in PyYAML
+  functions: yaml.load, yaml.load_all, yaml.full_load, yaml.full_load_all, yaml.unsafe_load, yaml.unsafe_load_all ...  (curated, fix commit a001f27825)
+  checklist: imported ok  no_call_to_vulnerable_api ok  all_call_sites_safe ok  no_unresolved_call_with_same_name ok  no_dynamic_markers ok  no_string_reference ok  no_star_import ok  function_data_available ok  not_transitively_required ok
+  reason:    [no_path] calls seen instead: yaml.safe_load (notes_app/settings.py:13)
+  fix:       upgrade pyyaml>=5.4
+...
+summary: 4 reachable, 7 not reachable, 97 uncertain

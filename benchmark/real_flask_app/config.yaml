@@ -1,0 +1,7 @@
+secret_key: change-me-in-production
+notes_key: 8Xz3n0GUVbcC1bc6wqR3pXUqDbIc6zNYMv6OJ7jmS4I=
+upload_dir: instance/avatars
+export_path: instance/notes-export.csv
+home_city:
+  lat: 28.61
+  lon: 77.21

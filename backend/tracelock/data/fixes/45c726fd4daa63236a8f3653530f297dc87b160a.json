@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/python-pillow/Pillow/commit/45c726fd4daa63236a8f3653530f297dc87b160a",
+ "owner": "python-pillow",
+ "repo": "Pillow",
+ "sha": "45c726fd4daa63236a8f3653530f297dc87b160a",
+ "qualnames": [
+  "PIL.ImageMath.eval"
+ ],
+ "files": [
+  {
+   "path": "src/PIL/ImageMath.py",
+   "module": "PIL.ImageMath",
+   "prefix_source": "git",
+   "functions": [
+    "PIL.ImageMath.eval"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/PIL/ImageMath.py",
+   "header": "@@ -237,6 +237,10 @@ def eval(expression, _dict={}, **kw):",
+   "functions": [
+    "PIL.ImageMath.eval"
+   ],
+   "text": "@@ -237,6 +237,10 @@ def eval(expression, _dict={}, **kw):\n     args.update(_dict)\n     args.update(kw)\n     for k, v in args.items():\n+        if '__' in k or hasattr(__builtins__, k):\n+            msg = f\"'{k}' not allowed\"\n+            raise ValueError(msg)\n+\n         if hasattr(v, \"im\"):\n             args[k] = _Operand(v)\n "
+  }
+ ]
+}

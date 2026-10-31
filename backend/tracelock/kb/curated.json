@@ -1,41 +1,767 @@
 {
-  "_comment": "Curated knowledge base. Key = any advisory id or alias. Vaibhav: verify every entry against its fix commit on GitHub, then add the rest of the seed list from docs/briefs/BRIEF_VAIBHAV.md. Dotted names must match how app code refers to the symbol (import name, not distribution name).",
+  "_comment": "Curated knowledge base. Key = CVE id (the resolver also matches GHSA/PYSEC aliases). Every vulnerable_funcs entry was read off the fix commit diff saved under backend/tracelock/data/fixes/<sha>.diff and every entry_api call path was checked in the source of the vulnerable release. Names are dotted by import name. Extra keys: fix_commits (all fix commits incl. backports), evidence (diff files), affected (from OSV). safe_usage 'missing_is_safe': true marks rules whose kwarg defaults to the safe value (verdict.py does not read it yet and treats a missing kwarg as unsafe).",
   "CVE-2020-14343": {
     "package": "pyyaml",
     "vulnerable_funcs": [
-      "yaml.constructor.FullConstructor.construct_python_object_apply",
       "yaml.constructor.FullConstructor.construct_python_object_new",
-      "yaml.constructor.FullConstructor.find_python_name"
+      "yaml.constructor.FullConstructor.construct_python_object",
+      "yaml.constructor.FullConstructor.construct_python_module"
     ],
     "entry_api": [
-      "yaml.load", "yaml.load_all", "yaml.full_load", "yaml.full_load_all",
-      "yaml.unsafe_load", "yaml.unsafe_load_all",
-      "yaml.FullLoader", "yaml.UnsafeLoader", "yaml.Loader"
+      "yaml.load",
+      "yaml.load_all",
+      "yaml.full_load",
+      "yaml.full_load_all",
+      "yaml.unsafe_load",
+      "yaml.unsafe_load_all",
+      "yaml.FullLoader",
+      "yaml.UnsafeLoader",
+      "yaml.Loader",
+      "yaml.CFullLoader",
+      "yaml.CUnsafeLoader",
+      "yaml.CLoader"
     ],
     "safe_usage": [
-      {"func": "yaml.load", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]},
-      {"func": "yaml.load_all", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]}
+      {
+        "func": "yaml.load",
+        "kwarg": "Loader",
+        "safe_values": [
+          "yaml.SafeLoader",
+          "yaml.CSafeLoader",
+          "yaml.BaseLoader",
+          "yaml.CBaseLoader",
+          "SafeLoader",
+          "CSafeLoader",
+          "BaseLoader",
+          "CBaseLoader"
+        ]
+      },
+      {
+        "func": "yaml.load_all",
+        "kwarg": "Loader",
+        "safe_values": [
+          "yaml.SafeLoader",
+          "yaml.CSafeLoader",
+          "yaml.BaseLoader",
+          "yaml.CBaseLoader",
+          "SafeLoader",
+          "CSafeLoader",
+          "BaseLoader",
+          "CBaseLoader"
+        ]
+      }
     ],
-    "fix_commit": "https://github.com/yaml/pyyaml/commit/a001f2782501ad2d24986e6cd05b5e2ba3f5d32e",
+    "fix_commit": "https://github.com/yaml/pyyaml/commit/a001f2782501ad2d24986959f0239a354675f9dc",
+    "evidence": [
+      "backend/tracelock/data/fixes/a001f2782501ad2d24986959f0239a354675f9dc.diff"
+    ],
+    "affected": "< 5.4",
     "confidence": 0.95,
-    "notes": "full_load / FullLoader executes arbitrary code via python/object/new. yaml.load without a Loader defaults to FullLoader in 5.1-5.3. safe_load is never affected. VERIFY fix commit sha."
+    "notes": "Fix a001f27 (5.4) moves the add_multi_constructor registrations for python/module:, python/object: and python/object/new: from FullConstructor to UnsafeConstructor, so in <=5.3.1 FullLoader builds arbitrary objects from those tags. The hunk header names construct_python_object_new but the change is the module-level registration. Reached via yaml.load/load_all with no Loader (defaults to FullLoader in 5.1-5.4, lib3/yaml/__init__.py:103-125 at 5.3), full_load*, unsafe_load*, and any Full/Unsafe/plain Loader class. safe_load and Safe/Base loaders never construct python/* tags. Previous curated sha a001f27...d32e did not exist (404); corrected from the OSV FIX reference."
   },
   "CVE-2020-1747": {
     "package": "pyyaml",
     "vulnerable_funcs": [
-      "yaml.constructor.FullConstructor.construct_python_object_apply",
-      "yaml.constructor.FullConstructor.find_python_name"
+      "yaml.constructor.FullConstructor.set_python_instance_state"
     ],
     "entry_api": [
-      "yaml.load", "yaml.load_all", "yaml.full_load", "yaml.full_load_all",
-      "yaml.FullLoader"
+      "yaml.load",
+      "yaml.load_all",
+      "yaml.full_load",
+      "yaml.full_load_all",
+      "yaml.unsafe_load",
+      "yaml.unsafe_load_all",
+      "yaml.FullLoader",
+      "yaml.UnsafeLoader",
+      "yaml.Loader",
+      "yaml.CFullLoader",
+      "yaml.CUnsafeLoader",
+      "yaml.CLoader"
     ],
     "safe_usage": [
-      {"func": "yaml.load", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]},
-      {"func": "yaml.load_all", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]}
+      {
+        "func": "yaml.load",
+        "kwarg": "Loader",
+        "safe_values": [
+          "yaml.SafeLoader",
+          "yaml.CSafeLoader",
+          "yaml.BaseLoader",
+          "yaml.CBaseLoader",
+          "SafeLoader",
+          "CSafeLoader",
+          "BaseLoader",
+          "CBaseLoader"
+        ]
+      },
+      {
+        "func": "yaml.load_all",
+        "kwarg": "Loader",
+        "safe_values": [
+          "yaml.SafeLoader",
+          "yaml.CSafeLoader",
+          "yaml.BaseLoader",
+          "yaml.CBaseLoader",
+          "SafeLoader",
+          "CSafeLoader",
+          "BaseLoader",
+          "CBaseLoader"
+        ]
+      }
     ],
-    "fix_commit": null,
+    "fix_commit": "https://github.com/yaml/pyyaml/commit/5080ba513377b6355a0502104846ee804656f1e0",
+    "evidence": [
+      "backend/tracelock/data/fixes/5080ba513377b6355a0502104846ee804656f1e0.diff"
+    ],
+    "affected": "< 5.3.1",
+    "confidence": 0.95,
+    "notes": "Fix 5080ba5 (PR #386, 5.3.1) makes FullConstructor.set_python_instance_state reject state keys matching ^extend$ and ^__.*__$ (new BaseConstructor.check_state_key). In 5.3 FullConstructor registers python/object/new, whose constructor construct_python_object_new -> construct_python_object_apply -> set_python_instance_state lets a document set 'extend' and run code under FullLoader. OSV also lists 0cedb2a (5.1 yaml.load deprecation warning), which is not this fix."
+  },
+  "CVE-2024-22195": {
+    "package": "jinja2",
+    "vulnerable_funcs": [
+      "jinja2.filters.do_xmlattr"
+    ],
+    "entry_api": [
+      "jinja2.filters.do_xmlattr",
+      "jinja2.filters.FILTERS.xmlattr"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/pallets/jinja/commit/716795349a41d4983a9a4771f7d883c96ea17be7",
+    "evidence": [
+      "backend/tracelock/data/fixes/716795349a41d4983a9a4771f7d883c96ea17be7.diff"
+    ],
+    "affected": "< 3.1.3",
     "confidence": 0.9,
-    "notes": "Same family as CVE-2020-14343 (incomplete fix in 5.3.1). VERIFY and add fix commit from PR yaml/pyyaml#386."
+    "notes": "Fix 7167953 (3.1.3) makes do_xmlattr raise ValueError for keys containing whitespace (attribute injection when user input is used as dict keys). Templates reach it through the filter name: FILTERS['xmlattr'] = do_xmlattr (src/jinja2/filters.py:1838 at 3.1.2), copied into every Environment via defaults.DEFAULT_FILTERS. 'jinja2.filters.FILTERS.xmlattr' stands for that registration so a `|xmlattr` in a template (recorded by app_graph as a string ref) is matched. Exploitable only when attacker-controlled data is used as keys."
+  },
+  "CVE-2024-34064": {
+    "package": "jinja2",
+    "vulnerable_funcs": [
+      "jinja2.filters.do_xmlattr"
+    ],
+    "entry_api": [
+      "jinja2.filters.do_xmlattr",
+      "jinja2.filters.FILTERS.xmlattr"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/pallets/jinja/commit/0668239dc6b44ef38e7a6c9f91f312fd4ca581cb",
+    "evidence": [
+      "backend/tracelock/data/fixes/0668239dc6b44ef38e7a6c9f91f312fd4ca581cb.diff"
+    ],
+    "affected": "< 3.1.4",
+    "confidence": 0.9,
+    "notes": "Fix 0668239 (3.1.4) widens the do_xmlattr key check from whitespace to [\\s/>=] (incomplete fix of CVE-2024-22195). Same reachability as CVE-2024-22195: templates using |xmlattr with user-controlled keys."
+  },
+  "CVE-2023-32681": {
+    "package": "requests",
+    "vulnerable_funcs": [
+      "requests.sessions.SessionRedirectMixin.rebuild_proxies",
+      "requests.sessions.SessionRedirectMixin.resolve_redirects"
+    ],
+    "entry_api": [
+      "requests.request",
+      "requests.get",
+      "requests.options",
+      "requests.head",
+      "requests.post",
+      "requests.put",
+      "requests.patch",
+      "requests.delete",
+      "requests.Session.request",
+      "requests.Session.get",
+      "requests.Session.options",
+      "requests.Session.head",
+      "requests.Session.post",
+      "requests.Session.put",
+      "requests.Session.patch",
+      "requests.Session.delete",
+      "requests.Session.send",
+      "requests.api.request",
+      "requests.sessions.Session.send"
+    ],
+    "safe_usage": [
+      {
+        "func": "requests.request",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.get",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.options",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.head",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.post",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.put",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.patch",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.delete",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "requests.Session.send",
+        "kwarg": "allow_redirects",
+        "safe_values": [
+          "False"
+        ]
+      }
+    ],
+    "fix_commit": "https://github.com/psf/requests/commit/74ea7cf7a6a27a4eeb2ae24e162bcc942a6706d5",
+    "evidence": [
+      "backend/tracelock/data/fixes/74ea7cf7a6a27a4eeb2ae24e162bcc942a6706d5.diff"
+    ],
+    "affected": ">= 2.3.0, < 2.31.0",
+    "confidence": 0.9,
+    "notes": "Fix 74ea7cf (2.31.0) stops rebuild_proxies adding Proxy-Authorization for https targets, where it leaked to the destination through the TLS tunnel on a redirect. At 2.30.0 rebuild_proxies is only called from resolve_redirects (sessions.py:245), which Session.send runs when allow_redirects is true (default for every method but head; api.py builds a Session per call). Exploitable only when proxies with credentials are configured (explicitly or via HTTPS_PROXY); static analysis cannot see the environment."
+  },
+  "CVE-2024-35195": {
+    "package": "requests",
+    "vulnerable_funcs": [
+      "requests.adapters.HTTPAdapter.send",
+      "requests.adapters.HTTPAdapter.get_connection"
+    ],
+    "entry_api": [
+      "requests.Session.request",
+      "requests.Session.get",
+      "requests.Session.options",
+      "requests.Session.head",
+      "requests.Session.post",
+      "requests.Session.put",
+      "requests.Session.patch",
+      "requests.Session.delete",
+      "requests.Session.send",
+      "requests.adapters.HTTPAdapter.send"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/psf/requests/commit/a58d7f2ffb4d00b46dca2d70a3932a0b37e22fac",
+    "evidence": [
+      "backend/tracelock/data/fixes/a58d7f2ffb4d00b46dca2d70a3932a0b37e22fac.diff"
+    ],
+    "affected": "< 2.32.0",
+    "confidence": 0.8,
+    "notes": "Fix a58d7f2 (2.32.0, PR #6655) changes HTTPAdapter.send to pick the urllib3 pool with the request's verify setting (new _get_connection); get_connection(url, proxies) ignored verify, so after one verify=False request every later request on the same Session to that host skipped certificate checks. Needs a verify=False call on a reused Session; the entry list over-approximates to any Session use because safe_usage cannot express 'unsafe only if some call passes verify=False'."
+  },
+  "CVE-2023-45803": {
+    "package": "urllib3",
+    "vulnerable_funcs": [
+      "urllib3.poolmanager.PoolManager.urlopen",
+      "urllib3.connectionpool.HTTPConnectionPool.urlopen"
+    ],
+    "entry_api": [
+      "urllib3.request",
+      "urllib3.PoolManager.request",
+      "urllib3.PoolManager.urlopen",
+      "urllib3.PoolManager.request_encode_body",
+      "urllib3.PoolManager.request_encode_url",
+      "urllib3.ProxyManager.request",
+      "urllib3.ProxyManager.urlopen",
+      "urllib3.proxy_from_url",
+      "urllib3.HTTPConnectionPool.urlopen",
+      "urllib3.HTTPConnectionPool.request",
+      "urllib3.HTTPSConnectionPool.urlopen",
+      "urllib3.HTTPSConnectionPool.request",
+      "urllib3.connection_from_url"
+    ],
+    "safe_usage": [
+      {
+        "func": "urllib3.request",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "urllib3.PoolManager.request",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "urllib3.PoolManager.urlopen",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "urllib3.HTTPConnectionPool.urlopen",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      }
+    ],
+    "fix_commit": "https://github.com/urllib3/urllib3/commit/4e98d57809dacab1cbe625fddeec1a290c478ea9",
+    "fix_commits": [
+      "https://github.com/urllib3/urllib3/commit/4e98d57809dacab1cbe625fddeec1a290c478ea9",
+      "https://github.com/urllib3/urllib3/commit/4e50fbc5db74e32cabd5ccc1ab81fc103adfe0b3",
+      "https://github.com/urllib3/urllib3/commit/b594c5ceaca38e1ac215f916538fb128e3526a36"
+    ],
+    "evidence": [
+      "backend/tracelock/data/fixes/4e98d57809dacab1cbe625fddeec1a290c478ea9.diff",
+      "backend/tracelock/data/fixes/4e50fbc5db74e32cabd5ccc1ab81fc103adfe0b3.diff",
+      "backend/tracelock/data/fixes/b594c5ceaca38e1ac215f916538fb128e3526a36.diff"
+    ],
+    "affected": "< 1.26.18, >= 2.0.0 < 2.0.7",
+    "confidence": 0.9,
+    "notes": "Fix (2.0.7 / 1.26.18 backport b594c5c) drops the body and content headers when a 303 redirect switches the method to GET, in the redirect branches of HTTPConnectionPool.urlopen and PoolManager.urlopen. Reached through PoolManager.request/urlopen and urllib3.request (2.x _DEFAULT_POOL) with redirect left on. requests calls urllib3 with redirect=False and follows redirects itself, so requests users are not affected through it; the transitive verdict stays UNCERTAIN on purpose."
+  },
+  "CVE-2023-43804": {
+    "package": "urllib3",
+    "vulnerable_funcs": [
+      "urllib3.poolmanager.PoolManager.urlopen",
+      "urllib3.util.retry.Retry.DEFAULT_REMOVE_HEADERS_ON_REDIRECT"
+    ],
+    "entry_api": [
+      "urllib3.request",
+      "urllib3.PoolManager.request",
+      "urllib3.PoolManager.urlopen",
+      "urllib3.PoolManager.request_encode_body",
+      "urllib3.PoolManager.request_encode_url",
+      "urllib3.ProxyManager.request",
+      "urllib3.ProxyManager.urlopen",
+      "urllib3.proxy_from_url"
+    ],
+    "safe_usage": [
+      {
+        "func": "urllib3.request",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "urllib3.PoolManager.request",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      },
+      {
+        "func": "urllib3.PoolManager.urlopen",
+        "kwarg": "redirect",
+        "safe_values": [
+          "False"
+        ]
+      }
+    ],
+    "fix_commit": "https://github.com/urllib3/urllib3/commit/644124ecd0b6e417c527191f866daa05a5a2056d",
+    "fix_commits": [
+      "https://github.com/urllib3/urllib3/commit/644124ecd0b6e417c527191f866daa05a5a2056d",
+      "https://github.com/urllib3/urllib3/commit/01220354d389cd05474713f8c982d05c9b17aafb"
+    ],
+    "evidence": [
+      "backend/tracelock/data/fixes/644124ecd0b6e417c527191f866daa05a5a2056d.diff",
+      "backend/tracelock/data/fixes/01220354d389cd05474713f8c982d05c9b17aafb.diff"
+    ],
+    "affected": "< 1.26.17, >= 2.0.0 < 2.0.6",
+    "confidence": 0.85,
+    "notes": "Fix (2.0.6 / 1.26.17 backport 0122035) adds Cookie to Retry.DEFAULT_REMOVE_HEADERS_ON_REDIRECT, the list PoolManager.urlopen strips on cross-host redirects (poolmanager.py:461-468 at 2.0.5). A Cookie header the app sets by hand leaks to the redirect target. Only PoolManager follows cross-host redirects; HTTPConnectionPool cannot. NOTE: urllib3 1.26.17 (the brief's seed pin) is the fixed release, not affected."
+  },
+  "CVE-2023-50447": {
+    "package": "pillow",
+    "vulnerable_funcs": [
+      "PIL.ImageMath.eval"
+    ],
+    "entry_api": [
+      "PIL.ImageMath.eval"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/python-pillow/Pillow/commit/45c726fd4daa63236a8f3653530f297dc87b160a",
+    "evidence": [
+      "backend/tracelock/data/fixes/45c726fd4daa63236a8f3653530f297dc87b160a.diff"
+    ],
+    "affected": "< 10.2.0",
+    "confidence": 0.95,
+    "notes": "Fix 45c726f (10.2.0) makes ImageMath.eval reject environment keys containing '__' or naming a builtin; before it, attacker-controlled keys in the environment (_dict/**kw) gave code execution through builtins.eval. Any ImageMath.eval call with a non-constant environment is the risk."
+  },
+  "CVE-2022-22817": {
+    "package": "pillow",
+    "vulnerable_funcs": [
+      "PIL.ImageMath.eval"
+    ],
+    "entry_api": [
+      "PIL.ImageMath.eval"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/python-pillow/Pillow/commit/8531b01d6cdf0b70f256f93092caa2a5d91afc11",
+    "evidence": [
+      "backend/tracelock/data/fixes/8531b01d6cdf0b70f256f93092caa2a5d91afc11.diff"
+    ],
+    "affected": "< 9.0.1",
+    "confidence": 0.95,
+    "notes": "Fix 8531b01 compiles the expression and rejects names not in the environment (except abs), and runs builtins.eval with restricted builtins; before it ImageMath.eval evaluated arbitrary expressions. NOTE: pillow 9.3.0 (the brief's seed pin) is not affected; OSV range ends at 9.0.1."
+  },
+  "CVE-2023-25577": {
+    "package": "werkzeug",
+    "vulnerable_funcs": [
+      "werkzeug.sansio.multipart.MultipartDecoder.next_event",
+      "werkzeug.formparser.MultiPartParser.parse",
+      "werkzeug.formparser.FormDataParser._parse_multipart"
+    ],
+    "entry_api": [
+      "werkzeug.formparser.parse_form_data",
+      "werkzeug.formparser.FormDataParser.parse",
+      "werkzeug.formparser.MultiPartParser.parse",
+      "werkzeug.wrappers.request.Request.make_form_data_parser",
+      "werkzeug.wrappers.Request.get_data",
+      "werkzeug.Request.get_data",
+      "werkzeug.wrappers.Request",
+      "werkzeug.wrappers.request.Request",
+      "werkzeug.Request",
+      "werkzeug.wrappers.Request.application",
+      "werkzeug.Request.application",
+      "flask.Flask"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/pallets/werkzeug/commit/517cac5a804e8c4dc4ed038bb20dacd038e7a9f1",
+    "evidence": [
+      "backend/tracelock/data/fixes/517cac5a804e8c4dc4ed038bb20dacd038e7a9f1.diff"
+    ],
+    "affected": "< 2.2.3",
+    "confidence": 0.85,
+    "notes": "Fix 517cac5 (2.2.3) adds max_form_parts (default 1000) and counts parts in MultipartDecoder.next_event, plumbed through MultiPartParser.parse, FormDataParser._parse_multipart and Request.make_form_data_parser. Unbounded parts = CPU/memory DoS. Apps reach it by reading request.form / .files / .values (properties, Request._load_form_data at wrappers/request.py:413-480 in 2.2.2) - attribute reads app_graph does not record as calls - so the Request class itself and flask.Flask (every Flask app parses forms through werkzeug) are listed so a direct werkzeug import never yields a false NOT_REACHABLE. Remove flask.Flask once verdict.py keeps the transitive reason when the package is also imported."
+  },
+  "CVE-2024-34069": {
+    "package": "werkzeug",
+    "vulnerable_funcs": [
+      "werkzeug.debug.DebuggedApplication.debug_application",
+      "werkzeug.debug.DebuggedApplication.execute_command",
+      "werkzeug.debug.DebuggedApplication.display_console",
+      "werkzeug.debug.DebuggedApplication.pin_auth",
+      "werkzeug.debug.DebuggedApplication.log_pin_request",
+      "werkzeug.debug.DebuggedApplication.__call__"
+    ],
+    "entry_api": [
+      "werkzeug.debug.DebuggedApplication",
+      "werkzeug.serving.run_simple",
+      "werkzeug.run_simple",
+      "flask.Flask.run"
+    ],
+    "safe_usage": [
+      {
+        "func": "werkzeug.serving.run_simple",
+        "kwarg": "use_debugger",
+        "safe_values": [
+          "False"
+        ],
+        "missing_is_safe": true
+      },
+      {
+        "func": "werkzeug.run_simple",
+        "kwarg": "use_debugger",
+        "safe_values": [
+          "False"
+        ],
+        "missing_is_safe": true
+      },
+      {
+        "func": "flask.Flask.run",
+        "kwarg": "debug",
+        "safe_values": [
+          "False"
+        ]
+      }
+    ],
+    "fix_commit": "https://github.com/pallets/werkzeug/commit/3386395b24c7371db11a5b8eaac0c91da5362692",
+    "evidence": [
+      "backend/tracelock/data/fixes/3386395b24c7371db11a5b8eaac0c91da5362692.diff"
+    ],
+    "affected": "< 3.0.3",
+    "confidence": 0.9,
+    "notes": "Fix 3386395 (3.0.3) adds DebuggedApplication.trusted_hosts and check_host_trust() to debug_application (evalex), execute_command, display_console, pin_auth and log_pin_request; before it a page on another host could drive the debugger console of a developer's machine. Reached by wrapping an app in DebuggedApplication, run_simple(use_debugger=True) (serving.py:1067-1070 at 3.0.2) or flask's app.run(debug=...) which passes use_debugger=self.debug. Flask.run without debug= depends on FLASK_DEBUG/config, so a missing kwarg there is treated as unsafe."
+  },
+  "CVE-2023-30861": {
+    "package": "flask",
+    "vulnerable_funcs": [
+      "flask.sessions.SecureCookieSessionInterface.save_session"
+    ],
+    "entry_api": [
+      "flask.Flask",
+      "flask.Flask.process_response",
+      "flask.sessions.SecureCookieSessionInterface.save_session"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/pallets/flask/commit/70f906c51ce49c485f1d355703e9cc3386b1cc2b",
+    "fix_commits": [
+      "https://github.com/pallets/flask/commit/70f906c51ce49c485f1d355703e9cc3386b1cc2b",
+      "https://github.com/pallets/flask/commit/afd63b16170b7c047f5758eb910c416511e9c965"
+    ],
+    "evidence": [
+      "backend/tracelock/data/fixes/70f906c51ce49c485f1d355703e9cc3386b1cc2b.diff",
+      "backend/tracelock/data/fixes/afd63b16170b7c047f5758eb910c416511e9c965.diff"
+    ],
+    "affected": "< 2.2.5, >= 2.3.0 < 2.3.2",
+    "confidence": 0.85,
+    "notes": "Fix (2.2.5 / 2.3.2) makes SecureCookieSessionInterface.save_session add 'Vary: Cookie' whenever it sets or deletes the cookie, not only when the session was accessed; a caching proxy could otherwise serve one user's refreshed permanent-session cookie to others. Flask.process_response calls save_session on every response (app.py:2344 at 2.2.4), so any Flask app executes it; exploitation also needs permanent sessions, SESSION_REFRESH_EACH_REQUEST and a caching proxy. NOTE: flask 2.2.5 (the brief's seed pin) is the fixed release."
+  },
+  "CVE-2024-6345": {
+    "package": "setuptools",
+    "vulnerable_funcs": [
+      "setuptools.package_index.PackageIndex._download_git",
+      "setuptools.package_index.PackageIndex._download_hg",
+      "setuptools.package_index.PackageIndex._download_svn",
+      "setuptools.package_index.PackageIndex._download_url",
+      "setuptools.package_index.PackageIndex._vcs_split_rev_from_url"
+    ],
+    "entry_api": [
+      "setuptools.package_index.PackageIndex",
+      "setuptools.package_index.PackageIndex.download",
+      "setuptools.package_index.PackageIndex.fetch_distribution",
+      "setuptools.package_index.PackageIndex.fetch"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/pypa/setuptools/commit/88807c7062788254f654ea8c03427adc859321f0",
+    "evidence": [
+      "backend/tracelock/data/fixes/88807c7062788254f654ea8c03427adc859321f0.diff"
+    ],
+    "affected": "< 70.0.0",
+    "confidence": 0.9,
+    "notes": "Fix 88807c7 (70.0.0, PR #4332) replaces os.system('git clone --quiet %s %s' % (url, filename)) and the hg/svn equivalents in PackageIndex._download_git/_download_hg/_download_svn with subprocess argument lists (new _download_vcs). URL -> shell command injection. Reached from PackageIndex.download -> _download_url (package_index.py:567-589 at 69.0.3), fetch_distribution and fetch (easy_install paths)."
+  },
+  "CVE-2022-29217": {
+    "package": "pyjwt",
+    "vulnerable_funcs": [
+      "jwt.algorithms.HMACAlgorithm.prepare_key",
+      "jwt.algorithms.OKPAlgorithm.prepare_key"
+    ],
+    "entry_api": [
+      "jwt.decode",
+      "jwt.PyJWT.decode",
+      "jwt.PyJWT.decode_complete",
+      "jwt.PyJWS.decode",
+      "jwt.PyJWS.decode_complete",
+      "jwt.api_jwt.decode",
+      "jwt.api_jwt.decode_complete",
+      "jwt.api_jws.decode",
+      "jwt.api_jws.decode_complete"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/jpadilla/pyjwt/commit/9c528670c455b8d948aff95ed50e22940d1ad3fc",
+    "evidence": [
+      "backend/tracelock/data/fixes/9c528670c455b8d948aff95ed50e22940d1ad3fc.diff"
+    ],
+    "affected": ">= 1.5.0, < 2.4.0",
+    "confidence": 0.85,
+    "notes": "Fix 9c52867 (2.4.0) makes HMACAlgorithm.prepare_key reject any PEM or SSH key (new utils.is_pem_format / is_ssh_key; the old blocklist missed formats such as ssh-ed25519 and EC PEM), and OKPAlgorithm.prepare_key type-check its key. decode -> PyJWS._verify_signature -> alg_obj.prepare_key (api_jws.py:236 at 2.3.0). Exploitable when decode accepts both HMAC and asymmetric algorithms (e.g. algorithms=jwt.algorithms.get_default_algorithms()) so a token signed with the public key as HMAC secret verifies."
+  },
+  "CVE-2024-24762": {
+    "package": "python-multipart",
+    "vulnerable_funcs": [
+      "multipart.multipart.parse_options_header"
+    ],
+    "entry_api": [
+      "multipart.multipart.parse_options_header",
+      "multipart.create_form_parser",
+      "multipart.parse_form",
+      "multipart.FormParser",
+      "multipart.multipart.create_form_parser",
+      "multipart.multipart.parse_form",
+      "multipart.multipart.FormParser",
+      "starlette.requests.Request.form",
+      "fastapi.Request.form"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/Kludex/python-multipart/commit/20f0ef6b4e4caf7d69a667c54dff57fe467109a4",
+    "evidence": [
+      "backend/tracelock/data/fixes/20f0ef6b4e4caf7d69a667c54dff57fe467109a4.diff"
+    ],
+    "affected": "< 0.0.7",
+    "confidence": 0.85,
+    "notes": "Fix 20f0ef6 (0.0.7) replaces the OPTION_RE regex loop in parse_options_header with email.message.Message parsing; the regex backtracks catastrophically on a crafted Content-Type (ReDoS). Callers at 0.0.6: create_form_parser (multipart.py:1824), FormParser's multipart callbacks (1694), parse_form. Starlette/FastAPI import parse_options_header for Request.form(); FastAPI File()/Form() parameters also parse forms but are parameter defaults, which app_graph does not visit."
+  },
+  "CVE-2024-23334": {
+    "package": "aiohttp",
+    "vulnerable_funcs": [
+      "aiohttp.web_urldispatcher.StaticResource._handle",
+      "aiohttp.web_urldispatcher.StaticResource.url_for"
+    ],
+    "entry_api": [
+      "aiohttp.web.UrlDispatcher.add_static",
+      "aiohttp.web_urldispatcher.UrlDispatcher.add_static",
+      "aiohttp.web.Application.router.add_static",
+      "aiohttp.web.static",
+      "aiohttp.web_routedef.static"
+    ],
+    "safe_usage": [
+      {
+        "func": "aiohttp.web.UrlDispatcher.add_static",
+        "kwarg": "follow_symlinks",
+        "safe_values": [
+          "False"
+        ],
+        "missing_is_safe": true
+      },
+      {
+        "func": "aiohttp.web.static",
+        "kwarg": "follow_symlinks",
+        "safe_values": [
+          "False"
+        ],
+        "missing_is_safe": true
+      }
+    ],
+    "fix_commit": "https://github.com/aio-libs/aiohttp/commit/1c335944d6a8b1298baf179b7c0b3069f10c514b",
+    "evidence": [
+      "backend/tracelock/data/fixes/1c335944d6a8b1298baf179b7c0b3069f10c514b.diff"
+    ],
+    "affected": ">= 1.0.5, < 3.9.2",
+    "confidence": 0.95,
+    "notes": "Fix 1c33594 (3.9.2, PR #8079) normalises the joined path before resolving it when follow_symlinks is True, in StaticResource._handle and url_for; before it '../' escaped the static root. Only static routes registered with follow_symlinks=True are affected (default False: web_urldispatcher.py:1114 at 3.9.1); web.static(prefix, path, **kw) forwards to router.add_static."
+  },
+  "CVE-2024-21503": {
+    "package": "black",
+    "vulnerable_funcs": [
+      "black.strings.lines_with_leading_tabs_expanded"
+    ],
+    "entry_api": [
+      "black.format_str",
+      "black.format_file_contents",
+      "black.format_file_in_place",
+      "black.main",
+      "black.strings.fix_docstring"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/psf/black/commit/f00093672628d212b8965a8993cee8bedf5fe9b8",
+    "evidence": [
+      "backend/tracelock/data/fixes/f00093672628d212b8965a8993cee8bedf5fe9b8.diff"
+    ],
+    "affected": "< 24.3.0",
+    "confidence": 0.9,
+    "notes": "Fix f000936 (24.3.0) removes FIRST_NON_WHITESPACE_RE from lines_with_leading_tabs_expanded (quadratic backtracking on docstrings with many leading tabs). Called by fix_docstring (strings.py:73) from LineGenerator docstring handling (linegen.py:455 at 23.12.1), i.e. any formatting of untrusted source."
+  },
+  "CVE-2023-49083": {
+    "package": "cryptography",
+    "vulnerable_funcs": [
+      "cryptography.hazmat.backends.openssl.backend.Backend._load_pkcs7_certificates"
+    ],
+    "entry_api": [
+      "cryptography.hazmat.primitives.serialization.pkcs7.load_pem_pkcs7_certificates",
+      "cryptography.hazmat.primitives.serialization.pkcs7.load_der_pkcs7_certificates",
+      "cryptography.hazmat.backends.openssl.backend.Backend.load_pem_pkcs7_certificates",
+      "cryptography.hazmat.backends.openssl.backend.Backend.load_der_pkcs7_certificates"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/pyca/cryptography/commit/f09c261ca10a31fe41b1262306db7f8f1da0e48a",
+    "evidence": [
+      "backend/tracelock/data/fixes/f09c261ca10a31fe41b1262306db7f8f1da0e48a.diff"
+    ],
+    "affected": ">= 3.1, < 41.0.6",
+    "confidence": 0.95,
+    "notes": "Fix f09c261 (41.0.6, PR #9926) returns [] from Backend._load_pkcs7_certificates when p7.d.sign is NULL instead of dereferencing it (crash/DoS on a PKCS7 blob without certificates). pkcs7.load_pem/load_der_pkcs7_certificates call backend.load_*_pkcs7_certificates -> _load_pkcs7_certificates (pkcs7.py:21-30, backend.py:1855-1883 at 41.0.5)."
+  },
+  "CVE-2024-34062": {
+    "package": "tqdm",
+    "vulnerable_funcs": [
+      "tqdm.cli.cast"
+    ],
+    "entry_api": [
+      "tqdm.cli.main",
+      "tqdm.main"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/tqdm/tqdm/commit/4e613f84ed2ae029559f539464df83fa91feb316",
+    "evidence": [
+      "backend/tracelock/data/fixes/4e613f84ed2ae029559f539464df83fa91feb316.diff"
+    ],
+    "affected": ">= 4.4.0, < 4.66.3",
+    "confidence": 0.95,
+    "notes": "Fix 4e613f8 (4.66.3) removes eval(typ + '(\"' + val + '\")') from tqdm.cli.cast, which typed CLI arguments. cast is only called from tqdm.cli.main (cli.py:215 at 4.66.1), exposed as tqdm.main and `python -m tqdm`; progress bars (tqdm.tqdm, trange) never reach it."
+  },
+  "CVE-2022-23491": {
+    "package": "certifi",
+    "vulnerable_funcs": [
+      "certifi.core.where",
+      "certifi.core.contents"
+    ],
+    "entry_api": [
+      "certifi.where",
+      "certifi.contents"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/certifi/python-certifi/commit/9e9e840925d7b8e76c76fdac1fab7e6e88c1c3b8",
+    "evidence": [
+      "backend/tracelock/data/fixes/9e9e840925d7b8e76c76fdac1fab7e6e88c1c3b8.diff"
+    ],
+    "affected": ">= 2017.11.05, < 2022.12.07",
+    "confidence": 0.8,
+    "notes": "Data-only fix 9e9e840 (2022.12.07): removes the TrustCor RootCert CA-1, CA-2 and ECA-1 roots from certifi/cacert.pem; no Python function changes. certifi.where()/contents() hand that bundle to TLS clients (requests, urllib3, httpx), so the risk is trusting the distrusted CA wherever the bundle is used."
+  },
+  "CVE-2023-37920": {
+    "package": "certifi",
+    "vulnerable_funcs": [
+      "certifi.core.where",
+      "certifi.core.contents"
+    ],
+    "entry_api": [
+      "certifi.where",
+      "certifi.contents"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/certifi/python-certifi/commit/8fb96ed81f71e7097ed11bc4d9b19afd7ea5c909",
+    "evidence": [
+      "backend/tracelock/data/fixes/8fb96ed81f71e7097ed11bc4d9b19afd7ea5c909.diff"
+    ],
+    "affected": ">= 2015.04.28, < 2023.07.22",
+    "confidence": 0.8,
+    "notes": "Data-only fix 8fb96ed (2023.07.22): removes the e-Tugra roots (E-Tugra Certification Authority, Global Root CA RSA v3 and ECC v3) from cacert.pem. Reached through certifi.where()/contents()."
+  },
+  "CVE-2024-39689": {
+    "package": "certifi",
+    "vulnerable_funcs": [
+      "certifi.core.where",
+      "certifi.core.contents"
+    ],
+    "entry_api": [
+      "certifi.where",
+      "certifi.contents"
+    ],
+    "safe_usage": [],
+    "fix_commit": "https://github.com/certifi/python-certifi/commit/bd8153872e9c6fc98f4023df9c2deaffea2fa463",
+    "evidence": [
+      "backend/tracelock/data/fixes/bd8153872e9c6fc98f4023df9c2deaffea2fa463.diff"
+    ],
+    "affected": ">= 2021.05.30, < 2024.07.04",
+    "confidence": 0.8,
+    "notes": "Data-only fix bd81538 (2024.07.04): removes the GLOBALTRUST 2020 root from cacert.pem. Reached through certifi.where()/contents()."
   }
 }

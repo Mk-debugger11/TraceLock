@@ -1,0 +1,41 @@
+{
+ "commit_url": "https://github.com/pyca/cryptography/commit/f09c261ca10a31fe41b1262306db7f8f1da0e48a",
+ "owner": "pyca",
+ "repo": "cryptography",
+ "sha": "f09c261ca10a31fe41b1262306db7f8f1da0e48a",
+ "qualnames": [
+  "cryptography.hazmat.backends.openssl.backend.Backend._load_pkcs7_certificates"
+ ],
+ "files": [
+  {
+   "path": "src/cryptography/__about__.py",
+   "module": "cryptography.__about__",
+   "prefix_source": "git",
+   "functions": []
+  },
+  {
+   "path": "src/cryptography/hazmat/backends/openssl/backend.py",
+   "module": "cryptography.hazmat.backends.openssl.backend",
+   "prefix_source": "git",
+   "functions": [
+    "cryptography.hazmat.backends.openssl.backend.Backend._load_pkcs7_certificates"
+   ]
+  },
+  {
+   "path": "vectors/cryptography_vectors/__about__.py",
+   "module": "vectors.cryptography_vectors.__about__",
+   "prefix_source": "git",
+   "functions": []
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/cryptography/hazmat/backends/openssl/backend.py",
+   "header": "@@ -1890,9 +1890,12 @@ def _load_pkcs7_certificates(self, p7) -> typing.List[x509.Certificate]:",
+   "functions": [
+    "cryptography.hazmat.backends.openssl.backend.Backend._load_pkcs7_certificates"
+   ],
+   "text": "@@ -1890,9 +1890,12 @@ def _load_pkcs7_certificates(self, p7) -> typing.List[x509.Certificate]:\n                 _Reasons.UNSUPPORTED_SERIALIZATION,\n             )\n \n+        certs: list[x509.Certificate] = []\n+        if p7.d.sign == self._ffi.NULL:\n+            return certs\n+\n         sk_x509 = p7.d.sign.cert\n         num = self._lib.sk_X509_num(sk_x509)\n-        certs = []\n         for i in range(num):\n             x509 = self._lib.sk_X509_value(sk_x509, i)\n             self.openssl_assert(x509 != self._ffi.NULL)"
+  }
+ ]
+}

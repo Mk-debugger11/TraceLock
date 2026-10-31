@@ -1,0 +1,12 @@
+$ cd backend && python -m tracelock.cli scan ../benchmark/real_flask_app --offline
+...
+REACHABLE     GHSA-j8r2-6x86-q33q  requests 2.30.0 -> fixed 2.31.0    confidence 0.90
+  aliases:   CVE-2023-32681, PYSEC-2023-74
+  summary:   Unintended leak of Proxy-Authorization header in requests
+  functions: requests.request, requests.get, requests.options, requests.head, requests.post, requests.put ...  (curated, fix commit 74ea7cf7a6)
+  path:      notes_app/views.py:33 notes_app.views.index  ->  notes_app/weather.py:10 notes_app.weather.fetch_forecast  ->  requests.Session.get
+             notes_app/weather.py:10 | resp = http.get(FORECAST_URL, params={"latitude": lat, "longitude": lon, "current_weather": "true"}, timeout=5)
+  entry:     route
+  fix:       upgrade requests>=2.31.0
+...
+summary: 4 reachable, 7 not reachable, 97 uncertain

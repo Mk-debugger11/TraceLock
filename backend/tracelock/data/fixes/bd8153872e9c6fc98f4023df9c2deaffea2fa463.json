@@ -1,0 +1,16 @@
+{
+ "commit_url": "https://github.com/certifi/python-certifi/commit/bd8153872e9c6fc98f4023df9c2deaffea2fa463",
+ "owner": "certifi",
+ "repo": "python-certifi",
+ "sha": "bd8153872e9c6fc98f4023df9c2deaffea2fa463",
+ "qualnames": [],
+ "files": [
+  {
+   "path": "certifi/__init__.py",
+   "module": "certifi",
+   "prefix_source": "git",
+   "functions": []
+  }
+ ],
+ "hunks": []
+}

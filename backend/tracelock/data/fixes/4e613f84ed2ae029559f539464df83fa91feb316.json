@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/tqdm/tqdm/commit/4e613f84ed2ae029559f539464df83fa91feb316",
+ "owner": "tqdm",
+ "repo": "tqdm",
+ "sha": "4e613f84ed2ae029559f539464df83fa91feb316",
+ "qualnames": [
+  "tqdm.cli.cast"
+ ],
+ "files": [
+  {
+   "path": "tqdm/cli.py",
+   "module": "tqdm.cli",
+   "prefix_source": "git",
+   "functions": [
+    "tqdm.cli.cast"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "tqdm/cli.py",
+   "header": "@@ -21,23 +21,34 @@ def cast(val, typ):",
+   "functions": [
+    "tqdm.cli.cast"
+   ],
+   "text": "@@ -21,23 +21,34 @@ def cast(val, typ):\n                 return cast(val, t)\n             except TqdmTypeError:\n                 pass\n-        raise TqdmTypeError(val + ' : ' + typ)\n+        raise TqdmTypeError(f\"{val} : {typ}\")\n \n     # sys.stderr.write('\\ndebug | `val:type`: `' + val + ':' + typ + '`.\\n')\n     if typ == 'bool':\n         if (val == 'True') or (val == ''):\n             return True\n-        elif val == 'False':\n+        if val == 'False':\n             return False\n-        else:\n-            raise TqdmTypeError(val + ' : ' + typ)\n-    try:\n-        return eval(typ + '(\"' + val + '\")')\n-    except Exception:\n-        if typ == 'chr':\n-            return chr(ord(eval('\"' + val + '\"'))).encode()\n-        else:\n-            raise TqdmTypeError(val + ' : ' + typ)\n+        raise TqdmTypeError(val + ' : ' + typ)\n+    if typ == 'chr':\n+        if len(val) == 1:\n+            return val.encode()\n+        if re.match(r\"^\\\\\\w+$\", val):\n+            return eval(f'\"{val}\"').encode()\n+        raise TqdmTypeError(f\"{val} : {typ}\")\n+    if typ == 'str':\n+        return val\n+    if typ == 'int':\n+        try:\n+            return int(val)\n+        except ValueError as exc:\n+            raise TqdmTypeError(f\"{val} : {typ}\") from exc\n+    if typ == 'float':\n+        try:\n+            return float(val)\n+        except ValueError as exc:\n+            raise TqdmTypeError(f\"{val} : {typ}\") from exc\n+    raise TqdmTypeError(f\"{val} : {typ}\")\n \n \n def posix_pipe(fin, fout, delim=b'\\\\n', buf_size=256,"
+  }
+ ]
+}

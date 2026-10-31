@@ -1,0 +1,51 @@
+{
+ "commit_url": "https://github.com/jpadilla/pyjwt/commit/9c528670c455b8d948aff95ed50e22940d1ad3fc",
+ "owner": "jpadilla",
+ "repo": "pyjwt",
+ "sha": "9c528670c455b8d948aff95ed50e22940d1ad3fc",
+ "qualnames": [
+  "jwt.algorithms.HMACAlgorithm.prepare_key",
+  "jwt.algorithms.OKPAlgorithm.prepare_key"
+ ],
+ "files": [
+  {
+   "path": "jwt/__init__.py",
+   "module": "jwt",
+   "prefix_source": "git",
+   "functions": []
+  },
+  {
+   "path": "jwt/algorithms.py",
+   "module": "jwt.algorithms",
+   "prefix_source": "git",
+   "functions": [
+    "jwt.algorithms.HMACAlgorithm.prepare_key",
+    "jwt.algorithms.OKPAlgorithm.prepare_key"
+   ]
+  },
+  {
+   "path": "jwt/utils.py",
+   "module": "jwt.utils",
+   "prefix_source": "git",
+   "functions": []
+  }
+ ],
+ "hunks": [
+  {
+   "path": "jwt/algorithms.py",
+   "header": "@@ -183,14 +185,7 @@ def __init__(self, hash_alg):",
+   "functions": [
+    "jwt.algorithms.HMACAlgorithm.prepare_key"
+   ],
+   "text": "@@ -183,14 +185,7 @@ def __init__(self, hash_alg):\n     def prepare_key(self, key):\n         key = force_bytes(key)\n \n-        invalid_strings = [\n-            b\"-----BEGIN PUBLIC KEY-----\",\n-            b\"-----BEGIN CERTIFICATE-----\",\n-            b\"-----BEGIN RSA PUBLIC KEY-----\",\n-            b\"ssh-rsa\",\n-        ]\n-\n-        if any(string_value in key for string_value in invalid_strings):\n+        if is_pem_format(key) or is_ssh_key(key):\n             raise InvalidKeyError(\n                 \"The specified key is an asymmetric key or x509 certificate and\"\n                 \" should not be used as an HMAC secret.\""
+  },
+  {
+   "path": "jwt/algorithms.py",
+   "header": "@@ -551,26 +546,28 @@ def __init__(self, **kwargs):",
+   "functions": [
+    "jwt.algorithms.OKPAlgorithm.prepare_key"
+   ],
+   "text": "@@ -551,26 +546,28 @@ def __init__(self, **kwargs):\n             pass\n \n         def prepare_key(self, key):\n-\n-            if isinstance(\n-                key,\n-                (Ed25519PrivateKey, Ed25519PublicKey, Ed448PrivateKey, Ed448PublicKey),\n-            ):\n-                return key\n-\n             if isinstance(key, (bytes, str)):\n                 if isinstance(key, str):\n                     key = key.encode(\"utf-8\")\n                 str_key = key.decode(\"utf-8\")\n \n                 if \"-----BEGIN PUBLIC\" in str_key:\n-                    return load_pem_public_key(key)\n-                if \"-----BEGIN PRIVATE\" in str_key:\n-                    return load_pem_private_key(key, password=None)\n-                if str_key[0:4] == \"ssh-\":\n-                    return load_ssh_public_key(key)\n+                    key = load_pem_public_key(key)\n+                elif \"-----BEGIN PRIVATE\" in str_key:\n+                    key = load_pem_private_key(key, password=None)\n+                elif str_key[0:4] == \"ssh-\":\n+                    key = load_ssh_public_key(key)\n \n-            raise TypeError(\"Expecting a PEM-formatted or OpenSSH key.\")\n+            # Explicit check the key to prevent confusing errors from cryptography\n+            if not isinstance(\n+                key,\n+                (Ed25519PrivateKey, Ed25519PublicKey, Ed448PrivateKey, Ed448PublicKey),\n+            ):\n+                raise InvalidKeyError(\n+                    \"Expecting a EllipticCurvePrivateKey/EllipticCurvePublicKey. Wrong key provided for EdDSA algorithms\"\n+                )\n+\n+            return key\n \n         def sign(self, msg, key):\n             \"\"\""
+  }
+ ]
+}

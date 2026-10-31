@@ -1,0 +1,42 @@
+{
+ "commit_url": "https://github.com/yaml/pyyaml/commit/5080ba513377b6355a0502104846ee804656f1e0",
+ "owner": "yaml",
+ "repo": "pyyaml",
+ "sha": "5080ba513377b6355a0502104846ee804656f1e0",
+ "qualnames": [
+  "yaml.constructor.FullConstructor.set_python_instance_state"
+ ],
+ "files": [
+  {
+   "path": "lib/yaml/constructor.py",
+   "module": "yaml.constructor",
+   "error": "pre-fix file does not parse: multiple exception types must be parenthesized"
+  },
+  {
+   "path": "lib3/yaml/constructor.py",
+   "module": "yaml.constructor",
+   "prefix_source": "git",
+   "functions": [
+    "yaml.constructor.FullConstructor.set_python_instance_state"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "lib3/yaml/constructor.py",
+   "header": "@@ -574,7 +592,7 @@ def make_python_instance(self, suffix, node,",
+   "functions": [
+    "yaml.constructor.FullConstructor.set_python_instance_state"
+   ],
+   "text": "@@ -574,7 +592,7 @@ def make_python_instance(self, suffix, node,\n         else:\n             return cls(*args, **kwds)\n \n-    def set_python_instance_state(self, instance, state):\n+    def set_python_instance_state(self, instance, state, unsafe=False):\n         if hasattr(instance, '__setstate__'):\n             instance.__setstate__(state)\n         else:"
+  },
+  {
+   "path": "lib3/yaml/constructor.py",
+   "header": "@@ -582,10 +600,15 @@ def set_python_instance_state(self, instance, state):",
+   "functions": [
+    "yaml.constructor.FullConstructor.set_python_instance_state"
+   ],
+   "text": "@@ -582,10 +600,15 @@ def set_python_instance_state(self, instance, state):\n             if isinstance(state, tuple) and len(state) == 2:\n                 state, slotstate = state\n             if hasattr(instance, '__dict__'):\n+                if not unsafe and state:\n+                    for key in state.keys():\n+                        self.check_state_key(key)\n                 instance.__dict__.update(state)\n             elif state:\n                 slotstate.update(state)\n             for key, value in slotstate.items():\n+                if not unsafe:\n+                    self.check_state_key(key)\n                 setattr(instance, key, value)\n \n     def construct_python_object(self, suffix, node):"
+  }
+ ]
+}

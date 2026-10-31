@@ -1,0 +1,45 @@
+{
+ "commit_url": "https://github.com/pallets/flask/commit/70f906c51ce49c485f1d355703e9cc3386b1cc2b",
+ "owner": "pallets",
+ "repo": "flask",
+ "sha": "70f906c51ce49c485f1d355703e9cc3386b1cc2b",
+ "qualnames": [
+  "flask.sessions.SecureCookieSessionInterface.save_session"
+ ],
+ "files": [
+  {
+   "path": "src/flask/sessions.py",
+   "module": "flask.sessions",
+   "prefix_source": "git",
+   "functions": [
+    "flask.sessions.SecureCookieSessionInterface.save_session"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/flask/sessions.py",
+   "header": "@@ -329,6 +329,10 @@ def save_session(",
+   "functions": [
+    "flask.sessions.SecureCookieSessionInterface.save_session"
+   ],
+   "text": "@@ -329,6 +329,10 @@ def save_session(\n         samesite = self.get_cookie_samesite(app)\n         httponly = self.get_cookie_httponly(app)\n \n+        # Add a \"Vary: Cookie\" header if the session was accessed at all.\n+        if session.accessed:\n+            response.vary.add(\"Cookie\")\n+\n         # If the session is modified to be empty, remove the cookie.\n         # If the session is empty, return without setting the cookie.\n         if not session:"
+  },
+  {
+   "path": "src/flask/sessions.py",
+   "header": "@@ -341,13 +345,10 @@ def save_session(",
+   "functions": [
+    "flask.sessions.SecureCookieSessionInterface.save_session"
+   ],
+   "text": "@@ -341,13 +345,10 @@ def save_session(\n                     samesite=samesite,\n                     httponly=httponly,\n                 )\n+                response.vary.add(\"Cookie\")\n \n             return\n \n-        # Add a \"Vary: Cookie\" header if the session was accessed at all.\n-        if session.accessed:\n-            response.vary.add(\"Cookie\")\n-\n         if not self.should_set_cookie(app, session):\n             return\n "
+  },
+  {
+   "path": "src/flask/sessions.py",
+   "header": "@@ -363,3 +364,4 @@ def save_session(",
+   "functions": [
+    "flask.sessions.SecureCookieSessionInterface.save_session"
+   ],
+   "text": "@@ -363,3 +364,4 @@ def save_session(\n             secure=secure,\n             samesite=samesite,\n         )\n+        response.vary.add(\"Cookie\")"
+  }
+ ]
+}
