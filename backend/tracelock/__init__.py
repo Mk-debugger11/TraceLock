@@ -86,4 +86,31 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
         "dynamic_markers": len(app.dynamic),
         "advisories": sum(len(v) for v in advisories.values()),
     }
+    if trace:
+        result.stats["trace_command"] = trace.get("command", "")
+        result.stats["trace_executed"] = bool(trace.get("executed"))
+    return result
+
+
+def scan_with_trace(root: Path, command: list[str], offline: bool = False, timeout: int = 60) -> ScanResult:
+    """Static scan, then run `command` under the profiler watching every finding's targets, then re-judge.
+
+    Executes the application: only for code you trust. Used by `tracelock trace <root> -- python app.py`.
+    """
+    from . import tracer
+
+    static = scan(root, offline=offline)
+    targets: list[str] = []
+    for f in static.findings:
+        targets.extend(f.spec.entry_api)
+        targets.extend(f.spec.vulnerable_funcs)
+    trace = tracer.run_trace(Path(root), tracer.targets_for(targets), command, timeout=timeout)
+    if not trace:
+        static.warnings.append("runtime trace could not run; showing static verdicts only")
+        return static
+    result = scan(root, offline=offline, trace=trace)
+    if not trace.get("executed"):
+        result.warnings.append(
+            f"runtime trace ran `{trace.get('command')}` (exit {trace.get('returncode')}) and no vulnerable function executed; "
+            "static verdicts stand" + (f"; stderr: {trace['stderr'][-300:]}" if trace.get("stderr") else ""))
     return result
