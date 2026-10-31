@@ -580,7 +580,7 @@ def _mark_phantoms(model: AppModel) -> None:
             cs.callee = None
 
 
-def build(root: Path) -> AppModel:
+def build(root: Path, ignore_paths: Optional[list] = None) -> AppModel:
     """Parse every .py file under root (and scan templates/config for symbol strings).
 
     Two passes over the Python files: pass 1 only collects function return types so that
@@ -589,12 +589,15 @@ def build(root: Path) -> AppModel:
     root = Path(root).resolve()
     model = AppModel(root=str(root))
     parsed: list[tuple[str, str, str, ast.Module]] = []   # (module, rel, source, tree)
+    ignores = [str(p).strip("/").rstrip("/") for p in (ignore_paths or []) if str(p).strip()]
     for path in sorted(root.rglob("*")):
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
         if path.is_dir() or path.is_symlink():
             continue
         rel = path.relative_to(root).as_posix()
+        if any(rel == ig or rel.startswith(ig + "/") for ig in ignores):
+            continue
         if path.suffix == ".py":
             try:
                 source = path.read_text(encoding="utf-8", errors="replace")

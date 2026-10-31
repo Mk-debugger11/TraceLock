@@ -8,10 +8,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from . import app_graph, deps, kb, lib_graph, osv, pypi_source, verdict
+from . import app_graph, config as project_config, deps, kb, lib_graph, osv, pypi_source, verdict
 from .models import ScanResult, VulnSpec
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def _dedupe_advisories(advisories: dict) -> dict:
@@ -41,6 +41,10 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
     root = Path(root).resolve()
     t0 = time.time()
     result = ScanResult(root=str(root))
+    cfg = project_config.load_config(root)
+    result.warnings.extend(cfg.get("_warnings", []))
+    if cfg.get("offline"):
+        offline = True
 
     dependencies = deps.scan_dependencies(root)
     result.dependencies = dependencies
@@ -49,7 +53,7 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
         result.warnings.append("no pinned dependencies found (requirements*.txt with name==version, or pyproject.toml)")
 
     advisories = _dedupe_advisories(osv.lookup(dependencies, offline=offline))
-    app = app_graph.build(root)
+    app = app_graph.build(root, ignore_paths=list(cfg.get("ignore_paths", []) or []))
     result.warnings.extend(app.warnings)
 
     source_cache: dict[str, Optional[Path]] = {}
@@ -100,6 +104,11 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
                     continue
                 exposure.merge_bridge(bridge, other.import_names, package=other.name)
             finding = verdict.decide(app, dep, adv, spec, exposure, trace=trace, all_deps=dependencies)
+            accepted, warning = project_config.acceptance_for(cfg, [adv.id, *adv.aliases])
+            if warning:
+                result.warnings.append(warning)
+            if accepted:
+                finding.accepted = accepted
             result.findings.append(finding)
 
     result.stats = {
@@ -110,6 +119,9 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
         "dynamic_markers": len(app.dynamic),
         "advisories": sum(len(v) for v in advisories.values()),
     }
+    result.stats["accepted"] = sum(1 for f in result.findings if f.accepted)
+    if cfg.get("_file"):
+        result.stats["config"] = cfg["_file"]
     if trace:
         result.stats["trace_command"] = trace.get("command", "")
         result.stats["trace_executed"] = bool(trace.get("executed"))

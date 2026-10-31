@@ -1,0 +1,16 @@
+services:
+  api:
+    build: { context: ., target: api }
+    ports: ["5001:5001"]
+    environment:
+      TRACELOCK_OFFLINE: "0"
+      TRACELOCK_ALLOW_LOCAL_PATHS: "1"     # lets the UI scan folders mounted below
+    volumes:
+      - ./projects:/projects:ro            # put projects to scan here; use /projects/<name> in the UI
+      - tracelock-data:/app/backend/workspace
+  ui:
+    build: { context: ., target: ui }
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  tracelock-data: {}

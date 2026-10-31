@@ -1,0 +1,13 @@
+# Use from another repo's .pre-commit-config.yaml:
+#   - repo: https://github.com/Mk-debugger11/TraceLock
+#     rev: v0.2.0
+#     hooks:
+#       - id: tracelock
+- id: tracelock
+  name: TraceLock reachability scan
+  description: Fails the commit when a known vulnerability in a pinned dependency is reachable from your code.
+  entry: tracelock scan . --quiet
+  language: python
+  additional_dependencies: ["./backend"]
+  pass_filenames: false
+  files: ^(requirements.*\.txt|pyproject\.toml|poetry\.lock|uv\.lock|Pipfile\.lock|.*\.py)$

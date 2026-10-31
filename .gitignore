@@ -12,3 +12,7 @@ workspace/
 .tracelock/
 frontend/.vite/
 frontend/node_modules/
+*.egg-info/
+build/
+.DS_Store
+projects/

@@ -89,6 +89,7 @@ class Finding:
     reasons: list[Reason] = field(default_factory=list)
     checklist: dict = field(default_factory=dict)           # name -> bool, printed for NOT_REACHABLE
     runtime: Optional[dict] = None                          # {"executed": true, "stack": [...]} from the tracer
+    accepted: Optional[dict] = None                         # {"reason", "by", "until", "justification"} from .tracelock.yml
 
 
 @dataclass
