@@ -11,6 +11,32 @@ from app.services import scan_service
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
 
+@router.get("")
+def list_scans(limit: int = 20, db: Session = Depends(get_db)):
+    """Recent scans with their verdict counts (for the history list)."""
+    out = []
+    for scan in scan_service.list_scans(db, limit=max(1, min(limit, 100))):
+        counts = {"reachable": 0, "not_reachable": 0, "uncertain": 0, "accepted": 0}
+        for f in (scan.result or {}).get("findings", []) or []:
+            key = str(f.get("verdict", "")).lower()
+            if key in counts:
+                counts[key] += 1
+            if f.get("accepted"):
+                counts["accepted"] += 1
+        out.append({
+            "scan_id": scan.id,
+            "source_type": scan.source_type,
+            "repository_url": scan.repository_url,
+            "ref": scan.ref,
+            "status": scan.status,
+            "stage": scan.stage,
+            "created_at": scan.created_at.isoformat() if scan.created_at else None,
+            "counts": counts if scan.result else None,
+            "dependencies": len((scan.result or {}).get("dependencies", []) or []) if scan.result else None,
+        })
+    return {"scans": out}
+
+
 @router.post("", response_model=ScanCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_scan(payload: ScanCreateRequest, db: Session = Depends(get_db)):
     scan = scan_service.create_scan(db, payload.repository_url, payload.ref)

@@ -11,7 +11,7 @@ import {
   FileCode2,
   RefreshCw
 } from 'lucide-react'
-import { fetchBranches, getResult, getScan, submitScan } from './api'
+import { listScans, fetchBranches, getResult, getScan, submitScan } from './api'
 import Results from './Results'
 
 const POLL_MS = 1000
@@ -63,6 +63,18 @@ function App() {
 
   const fileInputRef = useRef(null)
   const scanning = Boolean(scanId) && !result && !error
+  const [history, setHistory] = useState([])
+
+  const refreshHistory = async () => {
+    try {
+      const data = await listScans(12)
+      setHistory(data.scans || [])
+    } catch {
+      /* history is a convenience; never block the page on it */
+    }
+  }
+
+  useEffect(() => { refreshHistory() }, [result, error])
 
   useEffect(() => {
     if (!scanId) return
@@ -389,6 +401,38 @@ function App() {
       )}
 
       {result && <Results scanId={scanId} result={result} />}
+
+      {/* Recent scans */}
+      {history.length > 0 && (
+        <div className="card history-card">
+          <div className="history-head">
+            <span>Recent scans</span>
+            <button type="button" className="btn-secondary" onClick={refreshHistory}>
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
+          <table className="history-table">
+            <thead>
+              <tr><th>When</th><th>Source</th><th>Ref</th><th>Status</th><th>Reachable</th><th>Not reachable</th><th>Uncertain</th></tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.scan_id} className={h.scan_id === scanId ? 'current' : ''}>
+                  <td>{h.created_at ? new Date(h.created_at).toLocaleString() : ''}</td>
+                  <td className="mono" title={h.repository_url}>
+                    <a href={`?scan=${h.scan_id}`}>{(h.repository_url || '').replace('https://github.com/', '').slice(0, 48) || h.source_type}</a>
+                  </td>
+                  <td className="mono">{h.ref || ''}</td>
+                  <td><span className={`status-pill ${h.status}`}>{h.status}</span></td>
+                  <td className="num reachable">{h.counts ? h.counts.reachable : '–'}</td>
+                  <td className="num not-reachable">{h.counts ? h.counts.not_reachable : '–'}</td>
+                  <td className="num uncertain">{h.counts ? h.counts.uncertain : '–'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

@@ -839,3 +839,24 @@ body {
   .source-tab-btn { padding: 10px 6px; font-size: 13px; }
 }
 
+
+
+/* Recent scans */
+.history-card { margin-top: 28px; }
+.history-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-weight: 600; }
+.history-head .btn-secondary { padding: 6px 10px; font-size: 13px; }
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.history-table th { text-align: left; font-weight: 500; color: var(--text-muted, #8b93a7); padding: 6px 8px; border-bottom: 1px solid var(--border, #243047); }
+.history-table td { padding: 8px; border-bottom: 1px solid var(--border, #1b2334); vertical-align: middle; }
+.history-table tr.current td { background: rgba(59, 130, 246, 0.08); }
+.history-table .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.history-table .mono a { color: inherit; text-decoration: none; }
+.history-table .mono a:hover { text-decoration: underline; }
+.history-table .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.history-table .num.reachable { color: var(--danger, #ef4444); }
+.history-table .num.not-reachable { color: var(--success, #22c55e); }
+.history-table .num.uncertain { color: var(--warning, #f59e0b); }
+.status-pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border, #243047); }
+.status-pill.done { color: var(--success, #22c55e); }
+.status-pill.failed { color: var(--danger, #ef4444); }
+.status-pill.running, .status-pill.queued { color: var(--warning, #f59e0b); }

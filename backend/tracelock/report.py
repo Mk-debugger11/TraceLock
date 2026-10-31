@@ -44,7 +44,15 @@ SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 def _finding_text(f: Finding) -> str:
     adv, dep, spec = f.advisory, f.dependency, f.spec
     fixed = f" -> fixed {adv.fixed_in}" if adv.fixed_in else ""
-    lines = [f"{f.verdict:<14}{adv.id}  {dep.name} {dep.version or "(unpinned)"}{fixed}    confidence {f.confidence:.2f}"]
+    version = dep.version or "(unpinned)"
+    header = f"{f.verdict:<14}{adv.id}  {dep.name} {version}{fixed}    confidence {f.confidence:.2f}"
+    if f.accepted:
+        header += "    [ACCEPTED]"
+    lines = [header]
+    if f.accepted:
+        who = f" by {f.accepted['by']}" if f.accepted.get("by") else ""
+        until = f", until {f.accepted['until']}" if f.accepted.get("until") else ""
+        lines.append(f"  accepted:  {f.accepted['reason']}{who}{until} (not counted in the exit code)")
     aliases = ", ".join(a for a in adv.aliases if a != adv.id)
     if aliases:
         lines.append(f"  aliases:   {aliases}")
@@ -77,21 +85,73 @@ def _finding_text(f: Finding) -> str:
     return "\n".join(lines)
 
 
-def render_terminal(result: ScanResult) -> str:
+TIER_WORDS = {
+    "curated": "a hand-verified entry in TraceLock's knowledge base (checked against the fix commit)",
+    "ecosystem_specific": "the advisory's own machine-readable list of affected imports",
+    "fix_commit": "the functions changed by the advisory's fix commit, mapped with the AST of the pre-fix file",
+    "llm_verified": "functions proposed by an LLM from the advisory and fix diff, each verified to exist in the library source",
+    "none": "no source at all: the advisory names no function and has no usable fix commit",
+}
+
+
+def explain(f: Finding) -> str:
+    """One paragraph of plain-language reasoning for a finding, for `--explain` and the UI's Why? button."""
+    adv, dep, spec = f.advisory, f.dependency, f.spec
+    parts = [f"{adv.id} affects {dep.name} {dep.version or '(version unpinned)'}"
+             + (f" and is fixed in {adv.fixed_in}." if adv.fixed_in else ".")]
+    parts.append(f"The vulnerable functions came from {TIER_WORDS.get(spec.tier, spec.tier)}"
+                 + (f": {', '.join((spec.entry_api or spec.vulnerable_funcs)[:4])}." if (spec.entry_api or spec.vulnerable_funcs) else "."))
+    if f.verdict == REACHABLE:
+        if f.entry_kind == "runtime":
+            parts.append("The verdict is REACHABLE because the function actually executed while the app ran under TraceLock's profiler; the stack above is the real call stack.")
+        else:
+            app_steps = [s for s in f.path if s.file]
+            lib_steps = [s for s in f.path if not s.file]
+            start = app_steps[0] if app_steps else None
+            where = f"starting at {start.qualname} ({start.file}:{start.line})" if start else "starting in application code"
+            entry = {"main": "a recognised entry point (main / __main__)", "route": "a web route handler", "module": "module-level code",
+                     "test": "a test", "class definition": "a class definition", "orphan": "a function nothing else calls statically; still reachable because Python can invoke it by name"}.get(f.entry_kind or "", f.entry_kind or "")
+            parts.append(f"The verdict is REACHABLE because a resolved call chain exists {where}, which is {entry}, "
+                         f"through {len(app_steps)} application step(s)" + (f" and {len(lib_steps)} step(s) inside the library" if len(lib_steps) > 1 else "") + " to the vulnerable symbol.")
+        for r in f.reasons:
+            if r.kind in ("safe_arg_variable", "transitive", "value_ref", "subclass", "reference", "version_unpinned"):
+                parts.append(r.detail if r.detail.endswith(".") else r.detail + ".")
+    elif f.verdict == NOT_REACHABLE:
+        checks = [k for k, v in f.checklist.items() if isinstance(v, bool) and v]
+        detail = next((r.detail for r in f.reasons if r.kind in ("no_path", "not_imported")), "")
+        parts.append(f"The verdict is NOT_REACHABLE because all {len(checks)} soundness checks passed ({', '.join(checks)}). {detail}."
+                     " TraceLock only says this when it can prove the absence of a path; any dynamic call, string reference or unresolved receiver would have made it UNCERTAIN.")
+    else:
+        top = f.reasons[0] if f.reasons else None
+        if top:
+            where = f" at {top.file}:{top.line}" if top.file else ""
+            parts.append(f"The verdict is UNCERTAIN because of a '{top.kind}' signal{where}: {top.detail}. What to check: {top.check}")
+        parts.append("TraceLock prefers UNCERTAIN over a wrong 'safe'.")
+    if f.accepted:
+        parts.append(f"This finding is accepted in .tracelock.yml ({f.accepted['reason']}) and does not affect the exit code; the OpenVEX output records it as not_affected.")
+    parts.append(f"Confidence {f.confidence:.2f} reflects how the functions were identified and how much of the call resolution was exact; it orders findings and never changes a verdict.")
+    return " ".join(parts)
+
+
+def render_terminal(result: ScanResult, explain_findings: bool = False) -> str:
     out = [f"TraceLock scan of {result.root}", f"dependencies: {len(result.dependencies)}  findings: {len(result.findings)}", ""]
     for f in sorted(result.findings, key=lambda x: (ORDER.get(x.verdict, 9), x.dependency.name)):
         out.append(_finding_text(f))
+        if explain_findings:
+            out.append("  why:       " + explain(f))
         out.append("")
     counts = {v: sum(1 for f in result.findings if f.verdict == v) for v in ORDER}
-    out.append(f"summary: {counts[REACHABLE]} reachable, {counts[NOT_REACHABLE]} not reachable, {counts[UNCERTAIN]} uncertain")
+    accepted = sum(1 for f in result.findings if f.accepted)
+    out.append(f"summary: {counts[REACHABLE]} reachable, {counts[NOT_REACHABLE]} not reachable, {counts[UNCERTAIN]} uncertain"
+               + (f", {accepted} accepted" if accepted else ""))
     for w in result.warnings:
         out.append(f"warning: {w}")
     return "\n".join(out)
 
 
-def print_terminal(result: ScanResult, file: Optional[TextIO] = None) -> None:
+def print_terminal(result: ScanResult, file: Optional[TextIO] = None, explain_findings: bool = False) -> None:
     """Print render_terminal(), with the verdict word coloured when `rich` is installed."""
-    text = render_terminal(result)
+    text = render_terminal(result, explain_findings=explain_findings)
     try:
         from rich.console import Console
         from rich.text import Text
@@ -167,6 +227,12 @@ def _statement(f: Finding) -> dict:
     if aliases:
         vulnerability["aliases"] = aliases
     statement = {"vulnerability": vulnerability, "products": [{"@id": _purl(f)}]}
+    if f.accepted:
+        who = f" (by {f.accepted['by']})" if f.accepted.get("by") else ""
+        until = f", until {f.accepted['until']}" if f.accepted.get("until") else ""
+        statement.update(status="not_affected", justification=f.accepted["justification"],
+                         impact_statement=f"Accepted in .tracelock.yml{who}{until}: {f.accepted['reason']} TraceLock verdict was {f.verdict}.")
+        return statement
     if f.verdict == REACHABLE:
         site = _call_site(f.path)
         target = f.path[-1].qualname if f.path and not f.path[-1].file else _functions(f)

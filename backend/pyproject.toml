@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tracelock"
+version = "0.2.0"
+description = "Reachability-aware vulnerability scanner for Python projects: which CVEs can your code actually reach?"
+readme = "PACKAGE.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Kartik Madaan" }, { name = "Mukul Kumar" }, { name = "Vaibhav Vats" },
+]
+keywords = ["security", "sca", "vulnerability", "reachability", "osv", "openvex", "sarif"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+  "Environment :: Console",
+]
+# The engine is stdlib-only. `packaging` improves PEP 440 version comparison; `rich` colours the terminal.
+dependencies = ["packaging>=23"]
+
+[project.optional-dependencies]
+color = ["rich>=13"]
+yaml = ["PyYAML>=6"]
+server = ["fastapi", "uvicorn[standard]", "python-multipart", "SQLAlchemy"]
+dev = ["pytest", "httpx"]
+
+[project.scripts]
+tracelock = "tracelock.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Mk-debugger11/TraceLock"
+Issues = "https://github.com/Mk-debugger11/TraceLock/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tracelock*"]
+
+[tool.setuptools.package-data]
+tracelock = ["data/*.json", "data/fixes/*", "data/llm_cache/*", "data/wheels/*", "kb/*.json"]

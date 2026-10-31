@@ -32,8 +32,11 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--offline", action="store_true", help="never touch the network; use bundled snapshots and caches")
     common.add_argument("--fail-on", choices=["reachable", "uncertain"], default="reachable")
     common.add_argument("--quiet", action="store_true")
+    common.add_argument("--explain", action="store_true", help="add a plain-language 'why' paragraph under every finding")
 
     parser = argparse.ArgumentParser(prog="tracelock", description="Reachability-aware vulnerability scanner for Python projects")
+    from . import __version__
+    parser.add_argument("--version", action="version", version=f"tracelock {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("scan", parents=[common], help="scan a project directory (static, never executes it)")
     p.add_argument("--no-sources", action="store_true", help="skip downloading dependency source (curated KB only)")
@@ -65,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.quiet:
-        report.print_terminal(result)
+        report.print_terminal(result, explain_findings=args.explain)
     if args.json:
         args.json.write_text(report.to_json(result), encoding="utf-8")
     if args.vex:
@@ -74,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         args.sarif.write_text(report.to_sarif(result), encoding="utf-8")
 
     bad = {REACHABLE} if args.fail_on == "reachable" else {REACHABLE, UNCERTAIN}
-    return 1 if any(f.verdict in bad for f in result.findings) else 0
+    return 1 if any(f.verdict in bad and not f.accepted for f in result.findings) else 0
 
 
 if __name__ == "__main__":

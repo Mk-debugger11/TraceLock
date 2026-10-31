@@ -24,3 +24,5 @@ export const getScan = (scanId) => request(`/api/scans/${encodeURIComponent(scan
 export const getResult = (scanId) => request(`/api/scans/${encodeURIComponent(scanId)}/result`)
 
 export const downloadUrl = (scanId, file) => `${API_BASE}/api/scans/${encodeURIComponent(scanId)}/${file}`
+
+export const listScans = (limit = 12) => request(`/api/scans?limit=${limit}`)

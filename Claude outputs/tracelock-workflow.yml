@@ -1,0 +1,53 @@
+name: TraceLock
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"   # weekly: new advisories can make an old pin reachable
+
+permissions:
+  contents: read
+  security-events: write   # upload SARIF to the Security tab
+
+jobs:
+  tests:
+    name: tests + benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && pytest -q
+      - run: python benchmark/run.py
+
+  reachability:
+    name: reachability scan (demo app)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ./backend
+      - name: Scan benchmark/real_flask_app
+        # The demo app is pinned to vulnerable versions on purpose, so a non-zero exit is expected here;
+        # on a real project drop `|| true` to fail the build on a REACHABLE finding.
+        run: |
+          tracelock scan benchmark/real_flask_app --offline \
+            --json tracelock.json --vex tracelock.vex.json --sarif tracelock.sarif || true
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: tracelock.sarif
+          category: tracelock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tracelock-reports
+          path: |
+            tracelock.json
+            tracelock.vex.json
+            tracelock.sarif

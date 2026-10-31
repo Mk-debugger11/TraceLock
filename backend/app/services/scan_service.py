@@ -103,3 +103,8 @@ def requeue_interrupted_scans(db: Session) -> None:
         .values(status=STATUS_QUEUED, stage=STAGE_QUEUED, progress=0)
     )
     db.commit()
+
+
+def list_scans(db: Session, limit: int = 20) -> list:
+    """Most recent scans first, for the UI's history list."""
+    return list(db.scalars(select(Scan).order_by(Scan.created_at.desc()).limit(limit)))
