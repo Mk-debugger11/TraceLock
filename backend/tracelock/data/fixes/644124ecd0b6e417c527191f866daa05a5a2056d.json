@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/urllib3/urllib3/commit/644124ecd0b6e417c527191f866daa05a5a2056d",
+ "owner": "urllib3",
+ "repo": "urllib3",
+ "sha": "644124ecd0b6e417c527191f866daa05a5a2056d",
+ "qualnames": [
+  "urllib3.util.retry.Retry.DEFAULT_REMOVE_HEADERS_ON_REDIRECT"
+ ],
+ "files": [
+  {
+   "path": "src/urllib3/util/retry.py",
+   "module": "urllib3.util.retry",
+   "prefix_source": "git",
+   "functions": [
+    "urllib3.util.retry.Retry.DEFAULT_REMOVE_HEADERS_ON_REDIRECT"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/urllib3/util/retry.py",
+   "header": "@@ -187,7 +187,7 @@ class Retry:",
+   "functions": [
+    "urllib3.util.retry.Retry.DEFAULT_REMOVE_HEADERS_ON_REDIRECT"
+   ],
+   "text": "@@ -187,7 +187,7 @@ class Retry:\n     RETRY_AFTER_STATUS_CODES = frozenset([413, 429, 503])\n \n     #: Default headers to be used for ``remove_headers_on_redirect``\n-    DEFAULT_REMOVE_HEADERS_ON_REDIRECT = frozenset([\"Authorization\"])\n+    DEFAULT_REMOVE_HEADERS_ON_REDIRECT = frozenset([\"Cookie\", \"Authorization\"])\n \n     #: Default maximum backoff time.\n     DEFAULT_BACKOFF_MAX = 120"
+  }
+ ]
+}

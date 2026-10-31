@@ -1,0 +1,113 @@
+{
+ "commit_url": "https://github.com/pallets/werkzeug/commit/3386395b24c7371db11a5b8eaac0c91da5362692",
+ "owner": "pallets",
+ "repo": "werkzeug",
+ "sha": "3386395b24c7371db11a5b8eaac0c91da5362692",
+ "qualnames": [
+  "werkzeug.debug.DebuggedApplication.__call__",
+  "werkzeug.debug.DebuggedApplication.debug_application",
+  "werkzeug.debug.DebuggedApplication.display_console",
+  "werkzeug.debug.DebuggedApplication.execute_command",
+  "werkzeug.debug.DebuggedApplication.log_pin_request",
+  "werkzeug.debug.DebuggedApplication.pin_auth",
+  "werkzeug.sansio.utils.host_is_trusted",
+  "werkzeug.serving.run_simple"
+ ],
+ "files": [
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "module": "werkzeug.debug",
+   "prefix_source": "git",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.__call__",
+    "werkzeug.debug.DebuggedApplication.debug_application",
+    "werkzeug.debug.DebuggedApplication.display_console",
+    "werkzeug.debug.DebuggedApplication.execute_command",
+    "werkzeug.debug.DebuggedApplication.log_pin_request",
+    "werkzeug.debug.DebuggedApplication.pin_auth"
+   ]
+  },
+  {
+   "path": "src/werkzeug/sansio/utils.py",
+   "module": "werkzeug.sansio.utils",
+   "prefix_source": "git",
+   "functions": [
+    "werkzeug.sansio.utils.host_is_trusted"
+   ]
+  },
+  {
+   "path": "src/werkzeug/serving.py",
+   "module": "werkzeug.serving",
+   "prefix_source": "git",
+   "functions": [
+    "werkzeug.serving.run_simple"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "header": "@@ -344,7 +354,7 @@ def debug_application(",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.debug_application"
+   ],
+   "text": "@@ -344,7 +354,7 @@ def debug_application(\n \n             is_trusted = bool(self.check_pin_trust(environ))\n             html = tb.render_debugger_html(\n-                evalex=self.evalex,\n+                evalex=self.evalex and self.check_host_trust(environ),\n                 secret=self.secret,\n                 evalex_trusted=is_trusted,\n             )"
+  },
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "header": "@@ -372,6 +382,9 @@ def execute_command(  # type: ignore[return]",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.execute_command"
+   ],
+   "text": "@@ -372,6 +382,9 @@ def execute_command(  # type: ignore[return]\n         frame: DebugFrameSummary | _ConsoleFrame,\n     ) -> Response:\n         \"\"\"Execute a command in a console.\"\"\"\n+        if not self.check_host_trust(request.environ):\n+            return SecurityError()  # type: ignore[return-value]\n+\n         contexts = self.frame_contexts.get(id(frame), [])\n \n         with ExitStack() as exit_stack:"
+  },
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "header": "@@ -382,6 +395,9 @@ def execute_command(  # type: ignore[return]",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.display_console"
+   ],
+   "text": "@@ -382,6 +395,9 @@ def execute_command(  # type: ignore[return]\n \n     def display_console(self, request: Request) -> Response:\n         \"\"\"Display a standalone shell.\"\"\"\n+        if not self.check_host_trust(request.environ):\n+            return SecurityError()  # type: ignore[return-value]\n+\n         if 0 not in self.frames:\n             if self.console_init_func is None:\n                 ns = {}"
+  },
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "header": "@@ -434,12 +450,18 @@ def check_pin_trust(self, environ: WSGIEnvironment) -> bool | None:",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.pin_auth"
+   ],
+   "text": "@@ -434,12 +450,18 @@ def check_pin_trust(self, environ: WSGIEnvironment) -> bool | None:\n             return None\n         return (time.time() - PIN_TIME) < ts\n \n+    def check_host_trust(self, environ: WSGIEnvironment) -> bool:\n+        return host_is_trusted(environ.get(\"HTTP_HOST\"), self.trusted_hosts)\n+\n     def _fail_pin_auth(self) -> None:\n         time.sleep(5.0 if self._failed_pin_auth > 5 else 0.5)\n         self._failed_pin_auth += 1\n \n     def pin_auth(self, request: Request) -> Response:\n         \"\"\"Authenticates with the pin.\"\"\"\n+        if not self.check_host_trust(request.environ):\n+            return SecurityError()  # type: ignore[return-value]\n+\n         exhausted = False\n         auth = False\n         trust = self.check_pin_trust(request.environ)"
+  },
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "header": "@@ -489,8 +511,11 @@ def pin_auth(self, request: Request) -> Response:",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.log_pin_request"
+   ],
+   "text": "@@ -489,8 +511,11 @@ def pin_auth(self, request: Request) -> Response:\n             rv.delete_cookie(self.pin_cookie_name)\n         return rv\n \n-    def log_pin_request(self) -> Response:\n+    def log_pin_request(self, request: Request) -> Response:\n         \"\"\"Log the pin if needed.\"\"\"\n+        if not self.check_host_trust(request.environ):\n+            return SecurityError()  # type: ignore[return-value]\n+\n         if self.pin_logging and self.pin is not None:\n             _log(\n                 \"info\", \" * To enable the debugger you need to enter the security pin:\""
+  },
+  {
+   "path": "src/werkzeug/debug/__init__.py",
+   "header": "@@ -517,7 +542,7 @@ def __call__(",
+   "functions": [
+    "werkzeug.debug.DebuggedApplication.__call__"
+   ],
+   "text": "@@ -517,7 +542,7 @@ def __call__(\n             elif cmd == \"pinauth\" and secret == self.secret:\n                 response = self.pin_auth(request)  # type: ignore\n             elif cmd == \"printpin\" and secret == self.secret:\n-                response = self.log_pin_request()  # type: ignore\n+                response = self.log_pin_request(request)  # type: ignore\n             elif (\n                 self.evalex\n                 and cmd is not None"
+  },
+  {
+   "path": "src/werkzeug/sansio/utils.py",
+   "header": "@@ -8,7 +8,7 @@",
+   "functions": [
+    "werkzeug.sansio.utils.host_is_trusted"
+   ],
+   "text": "@@ -8,7 +8,7 @@\n from ..urls import uri_to_iri\n \n \n-def host_is_trusted(hostname: str, trusted_list: t.Iterable[str]) -> bool:\n+def host_is_trusted(hostname: str | None, trusted_list: t.Iterable[str]) -> bool:\n     \"\"\"Check if a host matches a list of trusted names.\n \n     :param hostname: The name to check."
+  },
+  {
+   "path": "src/werkzeug/serving.py",
+   "header": "@@ -1072,6 +1072,9 @@ def run_simple(",
+   "functions": [
+    "werkzeug.serving.run_simple"
+   ],
+   "text": "@@ -1072,6 +1072,9 @@ def run_simple(\n         from .debug import DebuggedApplication\n \n         application = DebuggedApplication(application, evalex=use_evalex)\n+        # Allow the specified hostname to use the debugger, in addition to\n+        # localhost domains.\n+        application.trusted_hosts.append(hostname)\n \n     if not is_running_from_reloader():\n         fd = None"
+  }
+ ]
+}

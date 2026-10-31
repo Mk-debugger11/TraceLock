@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/python-pillow/Pillow/commit/8531b01d6cdf0b70f256f93092caa2a5d91afc11",
+ "owner": "python-pillow",
+ "repo": "Pillow",
+ "sha": "8531b01d6cdf0b70f256f93092caa2a5d91afc11",
+ "qualnames": [
+  "PIL.ImageMath.eval"
+ ],
+ "files": [
+  {
+   "path": "src/PIL/ImageMath.py",
+   "module": "PIL.ImageMath",
+   "prefix_source": "git",
+   "functions": [
+    "PIL.ImageMath.eval"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/PIL/ImageMath.py",
+   "header": "@@ -246,7 +246,12 @@ def eval(expression, _dict={}, **kw):",
+   "functions": [
+    "PIL.ImageMath.eval"
+   ],
+   "text": "@@ -246,7 +246,12 @@ def eval(expression, _dict={}, **kw):\n         if hasattr(v, \"im\"):\n             args[k] = _Operand(v)\n \n-    out = builtins.eval(expression, args)\n+    code = compile(expression, \"<string>\", \"eval\")\n+    for name in code.co_names:\n+        if name not in args and name != \"abs\":\n+            raise ValueError(f\"'{name}' not allowed\")\n+\n+    out = builtins.eval(expression, {\"__builtins\": {\"abs\": abs}}, args)\n     try:\n         return out.im\n     except AttributeError:"
+  }
+ ]
+}

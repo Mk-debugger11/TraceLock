@@ -1,0 +1,39 @@
+{
+ "commit_url": "https://github.com/psf/black/commit/f00093672628d212b8965a8993cee8bedf5fe9b8",
+ "owner": "psf",
+ "repo": "black",
+ "sha": "f00093672628d212b8965a8993cee8bedf5fe9b8",
+ "qualnames": [
+  "black.strings.FIRST_NON_WHITESPACE_RE",
+  "black.strings.lines_with_leading_tabs_expanded"
+ ],
+ "files": [
+  {
+   "path": "src/black/strings.py",
+   "module": "black.strings",
+   "prefix_source": "git",
+   "functions": [
+    "black.strings.FIRST_NON_WHITESPACE_RE",
+    "black.strings.lines_with_leading_tabs_expanded"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/black/strings.py",
+   "header": "@@ -14,7 +14,6 @@",
+   "functions": [
+    "black.strings.FIRST_NON_WHITESPACE_RE"
+   ],
+   "text": "@@ -14,7 +14,6 @@\n STRING_PREFIX_RE: Final = re.compile(\n     r\"^([\" + STRING_PREFIX_CHARS + r\"]*)(.*)$\", re.DOTALL\n )\n-FIRST_NON_WHITESPACE_RE: Final = re.compile(r\"\\s*\\t+\\s*(\\S)\")\n UNICODE_ESCAPE_RE: Final = re.compile(\n     r\"(?P<backslashes>\\\\+)(?P<body>\"\n     r\"(u(?P<u>[a-fA-F0-9]{4}))\"  # Character with 16-bit hex value xxxx"
+  },
+  {
+   "path": "src/black/strings.py",
+   "header": "@@ -51,18 +50,13 @@ def lines_with_leading_tabs_expanded(s: str) -> List[str]:",
+   "functions": [
+    "black.strings.lines_with_leading_tabs_expanded"
+   ],
+   "text": "@@ -51,18 +50,13 @@ def lines_with_leading_tabs_expanded(s: str) -> List[str]:\n     \"\"\"\n     lines = []\n     for line in s.splitlines():\n-        # Find the index of the first non-whitespace character after a string of\n-        # whitespace that includes at least one tab\n-        match = FIRST_NON_WHITESPACE_RE.match(line)\n-        if match:\n-            first_non_whitespace_idx = match.start(1)\n-\n-            lines.append(\n-                line[:first_non_whitespace_idx].expandtabs()\n-                + line[first_non_whitespace_idx:]\n-            )\n-        else:\n+        stripped_line = line.lstrip()\n+        if not stripped_line or stripped_line == line:\n             lines.append(line)\n+        else:\n+            prefix_length = len(line) - len(stripped_line)\n+            prefix = line[:prefix_length].expandtabs()\n+            lines.append(prefix + stripped_line)\n     if s.endswith(\"\\n\"):\n         lines.append(\"\")\n     return lines"
+  }
+ ]
+}

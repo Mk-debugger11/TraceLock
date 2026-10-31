@@ -1,0 +1,29 @@
+{
+ "commit_url": "https://github.com/Kludex/python-multipart/commit/20f0ef6b4e4caf7d69a667c54dff57fe467109a4",
+ "owner": "Kludex",
+ "repo": "python-multipart",
+ "sha": "20f0ef6b4e4caf7d69a667c54dff57fe467109a4",
+ "qualnames": [
+  "multipart.multipart.parse_options_header"
+ ],
+ "files": [
+  {
+   "path": "multipart/multipart.py",
+   "module": "multipart.multipart",
+   "prefix_source": "git",
+   "functions": [
+    "multipart.multipart.parse_options_header"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "multipart/multipart.py",
+   "header": "@@ -76,44 +78,44 @@",
+   "functions": [
+    "multipart.multipart.parse_options_header"
+   ],
+   "text": "@@ -76,44 +78,44 @@\n QUOTE = b'\"'[0]\n \n \n-def parse_options_header(value):\n+def parse_options_header(value: Union[str, bytes]) -> Tuple[bytes, Dict[bytes, bytes]]:\n     \"\"\"\n     Parses a Content-Type header into a value in the following format:\n         (content_type, {parameters})\n     \"\"\"\n+    # Uses email.message.Message to parse the header as described in PEP 594.\n+    # Ref: https://peps.python.org/pep-0594/#cgi\n     if not value:\n         return (b'', {})\n \n-    # If we are passed a string, we assume that it conforms to WSGI and does\n-    # not contain any code point that's not in latin-1.\n-    if isinstance(value, str):            # pragma: no cover\n-        value = value.encode('latin-1')\n+    # If we are passed bytes, we assume that it conforms to WSGI, encoding in latin-1.\n+    if isinstance(value, bytes):  # pragma: no cover\n+        value = value.decode('latin-1')\n+\n+    # For types\n+    assert isinstance(value, str), 'Value should be a string by now'\n \n     # If we have no options, return the string as-is.\n-    if b';' not in value:\n-        return (value.lower().strip(), {})\n+    if \";\" not in value:\n+        return (value.lower().strip().encode('latin-1'), {})\n \n     # Split at the first semicolon, to get our value and then options.\n-    ctype, rest = value.split(b';', 1)\n+    # ctype, rest = value.split(b';', 1)\n+    message = Message()\n+    message['content-type'] = value\n+    params = message.get_params()\n+    # If there were no parameters, this would have already returned above\n+    assert params, 'At least the content type value should be present'\n+    ctype = params.pop(0)[0].encode('latin-1')\n     options = {}\n-\n-    # Parse the options.\n-    for match in OPTION_RE.finditer(rest):\n-        key = match.group(1).lower()\n-        value = match.group(2)\n-        if value[0] == QUOTE and value[-1] == QUOTE:\n-            # Unquote the value.\n-            value = value[1:-1]\n-            value = value.replace(b'\\\\\\\\', b'\\\\').replace(b'\\\\\"', b'\"')\n-\n+    for param in params:\n+        key, value = param\n         # If the value is a filename, we need to fix a bug on IE6 that sends\n         # the full file path instead of the filename.\n-        if key == b'filename':\n-            if value[1:3] == b':\\\\' or value[:2] == b'\\\\\\\\':\n-                value = value.split(b'\\\\')[-1]\n-"
+  }
+ ]
+}

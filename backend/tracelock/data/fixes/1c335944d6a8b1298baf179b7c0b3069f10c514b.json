@@ -1,0 +1,39 @@
+{
+ "commit_url": "https://github.com/aio-libs/aiohttp/commit/1c335944d6a8b1298baf179b7c0b3069f10c514b",
+ "owner": "aio-libs",
+ "repo": "aiohttp",
+ "sha": "1c335944d6a8b1298baf179b7c0b3069f10c514b",
+ "qualnames": [
+  "aiohttp.web_urldispatcher.StaticResource._handle",
+  "aiohttp.web_urldispatcher.StaticResource.url_for"
+ ],
+ "files": [
+  {
+   "path": "aiohttp/web_urldispatcher.py",
+   "module": "aiohttp.web_urldispatcher",
+   "prefix_source": "git",
+   "functions": [
+    "aiohttp.web_urldispatcher.StaticResource._handle",
+    "aiohttp.web_urldispatcher.StaticResource.url_for"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "aiohttp/web_urldispatcher.py",
+   "header": "@@ -573,9 +573,14 @@ def url_for(  # type: ignore[override]",
+   "functions": [
+    "aiohttp.web_urldispatcher.StaticResource.url_for"
+   ],
+   "text": "@@ -573,9 +573,14 @@ def url_for(  # type: ignore[override]\n             url = url / filename\n \n         if append_version:\n+            unresolved_path = self._directory.joinpath(filename)\n             try:\n-                filepath = self._directory.joinpath(filename).resolve()\n-                if not self._follow_symlinks:\n+                if self._follow_symlinks:\n+                    normalized_path = Path(os.path.normpath(unresolved_path))\n+                    normalized_path.relative_to(self._directory)\n+                    filepath = normalized_path.resolve()\n+                else:\n+                    filepath = unresolved_path.resolve()\n                     filepath.relative_to(self._directory)\n             except (ValueError, FileNotFoundError):\n                 # ValueError for case when path point to symlink"
+  },
+  {
+   "path": "aiohttp/web_urldispatcher.py",
+   "header": "@@ -640,8 +645,13 @@ async def _handle(self, request: Request) -> StreamResponse:",
+   "functions": [
+    "aiohttp.web_urldispatcher.StaticResource._handle"
+   ],
+   "text": "@@ -640,8 +645,13 @@ async def _handle(self, request: Request) -> StreamResponse:\n                 # /static/\\\\machine_name\\c$ or /static/D:\\path\n                 # where the static dir is totally different\n                 raise HTTPForbidden()\n-            filepath = self._directory.joinpath(filename).resolve()\n-            if not self._follow_symlinks:\n+            unresolved_path = self._directory.joinpath(filename)\n+            if self._follow_symlinks:\n+                normalized_path = Path(os.path.normpath(unresolved_path))\n+                normalized_path.relative_to(self._directory)\n+                filepath = normalized_path.resolve()\n+            else:\n+                filepath = unresolved_path.resolve()\n                 filepath.relative_to(self._directory)\n         except (ValueError, FileNotFoundError) as error:\n             # relatively safe"
+  }
+ ]
+}

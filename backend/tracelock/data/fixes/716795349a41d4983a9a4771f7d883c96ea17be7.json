@@ -1,0 +1,39 @@
+{
+ "commit_url": "https://github.com/pallets/jinja/commit/716795349a41d4983a9a4771f7d883c96ea17be7",
+ "owner": "pallets",
+ "repo": "jinja",
+ "sha": "716795349a41d4983a9a4771f7d883c96ea17be7",
+ "qualnames": [
+  "jinja2.filters.FILTERS.xmlattr",
+  "jinja2.filters.do_xmlattr"
+ ],
+ "files": [
+  {
+   "path": "src/jinja2/filters.py",
+   "module": "jinja2.filters",
+   "prefix_source": "git",
+   "functions": [
+    "jinja2.filters.FILTERS.xmlattr",
+    "jinja2.filters.do_xmlattr"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/jinja2/filters.py",
+   "header": "@@ -248,13 +248,17 @@ def do_items(value: t.Union[t.Mapping[K, V], Undefined]) -> t.Iterator[t.Tuple[K",
+   "functions": [
+    "jinja2.filters.do_xmlattr"
+   ],
+   "text": "@@ -248,13 +248,17 @@ def do_items(value: t.Union[t.Mapping[K, V], Undefined]) -> t.Iterator[t.Tuple[K\n     yield from value.items()\n \n \n+_space_re = re.compile(r\"\\s\", flags=re.ASCII)\n+\n+\n @pass_eval_context\n def do_xmlattr(\n     eval_ctx: \"EvalContext\", d: t.Mapping[str, t.Any], autospace: bool = True\n ) -> str:\n     \"\"\"Create an SGML/XML attribute string based on the items in a dict.\n-    All values that are neither `none` nor `undefined` are automatically\n-    escaped:\n+\n+    If any key contains a space, this fails with a ``ValueError``. Values that\n+    are neither ``none`` nor ``undefined`` are automatically escaped.\n \n     .. sourcecode:: html+jinja\n "
+  },
+  {
+   "path": "src/jinja2/filters.py",
+   "header": "@@ -273,12 +277,22 @@ def do_xmlattr(",
+   "functions": [
+    "jinja2.filters.do_xmlattr"
+   ],
+   "text": "@@ -273,12 +277,22 @@ def do_xmlattr(\n \n     As you can see it automatically prepends a space in front of the item\n     if the filter returned something unless the second parameter is false.\n+\n+    .. versionchanged:: 3.1.3\n+        Keys with spaces are not allowed.\n     \"\"\"\n-    rv = \" \".join(\n-        f'{escape(key)}=\"{escape(value)}\"'\n-        for key, value in d.items()\n-        if value is not None and not isinstance(value, Undefined)\n-    )\n+    items = []\n+\n+    for key, value in d.items():\n+        if value is None or isinstance(value, Undefined):\n+            continue\n+\n+        if _space_re.search(key) is not None:\n+            raise ValueError(f\"Spaces are not allowed in attributes: '{key}'\")\n+\n+        items.append(f'{escape(key)}=\"{escape(value)}\"')\n+\n+    rv = \" \".join(items)\n \n     if autospace and rv:\n         rv = \" \" + rv"
+  }
+ ]
+}

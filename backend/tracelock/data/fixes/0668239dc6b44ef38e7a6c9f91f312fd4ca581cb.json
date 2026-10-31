@@ -1,0 +1,47 @@
+{
+ "commit_url": "https://github.com/pallets/jinja/commit/0668239dc6b44ef38e7a6c9f91f312fd4ca581cb",
+ "owner": "pallets",
+ "repo": "jinja",
+ "sha": "0668239dc6b44ef38e7a6c9f91f312fd4ca581cb",
+ "qualnames": [
+  "jinja2.filters.FILTERS.xmlattr",
+  "jinja2.filters.do_xmlattr"
+ ],
+ "files": [
+  {
+   "path": "src/jinja2/filters.py",
+   "module": "jinja2.filters",
+   "prefix_source": "git",
+   "functions": [
+    "jinja2.filters.FILTERS.xmlattr",
+    "jinja2.filters.do_xmlattr"
+   ]
+  }
+ ],
+ "hunks": [
+  {
+   "path": "src/jinja2/filters.py",
+   "header": "@@ -259,8 +261,14 @@ def do_xmlattr(",
+   "functions": [
+    "jinja2.filters.do_xmlattr"
+   ],
+   "text": "@@ -259,8 +261,14 @@ def do_xmlattr(\n ) -> str:\n     \"\"\"Create an SGML/XML attribute string based on the items in a dict.\n \n-    If any key contains a space, this fails with a ``ValueError``. Values that\n-    are neither ``none`` nor ``undefined`` are automatically escaped.\n+    **Values** that are neither ``none`` nor ``undefined`` are automatically\n+    escaped, safely allowing untrusted user input.\n+\n+    User input should not be used as **keys** to this filter. If any key\n+    contains a space, ``/`` solidus, ``>`` greater-than sign, or ``=`` equals\n+    sign, this fails with a ``ValueError``. Regardless of this, user input\n+    should never be used as keys to this filter, or must be separately validated\n+    first.\n \n     .. sourcecode:: html+jinja\n "
+  },
+  {
+   "path": "src/jinja2/filters.py",
+   "header": "@@ -280,6 +288,10 @@ def do_xmlattr(",
+   "functions": [
+    "jinja2.filters.do_xmlattr"
+   ],
+   "text": "@@ -280,6 +288,10 @@ def do_xmlattr(\n     As you can see it automatically prepends a space in front of the item\n     if the filter returned something unless the second parameter is false.\n \n+    .. versionchanged:: 3.1.4\n+        Keys with ``/`` solidus, ``>`` greater-than sign, or ``=`` equals sign\n+        are not allowed.\n+\n     .. versionchanged:: 3.1.3\n         Keys with spaces are not allowed.\n     \"\"\""
+  },
+  {
+   "path": "src/jinja2/filters.py",
+   "header": "@@ -289,8 +301,8 @@ def do_xmlattr(",
+   "functions": [
+    "jinja2.filters.do_xmlattr"
+   ],
+   "text": "@@ -289,8 +301,8 @@ def do_xmlattr(\n         if value is None or isinstance(value, Undefined):\n             continue\n \n-        if _space_re.search(key) is not None:\n-            raise ValueError(f\"Spaces are not allowed in attributes: '{key}'\")\n+        if _attr_key_re.search(key) is not None:\n+            raise ValueError(f\"Invalid character in attribute name: {key!r}\")\n \n         items.append(f'{escape(key)}=\"{escape(value)}\"')\n "
+  }
+ ]
+}
