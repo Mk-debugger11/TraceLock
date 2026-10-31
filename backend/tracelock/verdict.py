@@ -131,6 +131,20 @@ def _chain(app: AppModel, cs: CallSite, target: str, max_depth: int = 10) -> tup
     return steps, entry_kind
 
 
+TIER_BASE_NOTE = {
+    "curated": "hand-verified knowledge-base entry",
+    "ecosystem_specific": "advisory's own affected-imports list",
+    "fix_commit": "functions mapped from the fix commit",
+    "llm_verified": "LLM-proposed functions, verified against the source",
+    "none": "no function data",
+}
+
+
+def _base_factor(spec: VulnSpec, default: float) -> dict:
+    base = spec.confidence or default
+    return {"factor": f"function data: {spec.tier}", "effect": f"base {base:.2f}", "note": TIER_BASE_NOTE.get(spec.tier, spec.tier)}
+
+
 def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposure: set[str],
            trace: Optional[dict] = None, all_deps: Optional[list[Dependency]] = None) -> Finding:
     targets = spec.targets() | set(exposure)
@@ -159,7 +173,9 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                     continue
                 stack = [CallStep(s.get("function", "?"), s.get("file", ""), s.get("line", 0), s.get("code", "")) for s in hit.get("stack", [])]
                 return Finding(adv, dep, spec, REACHABLE, 1.0, path=stack, entry_kind="runtime",
-                               runtime={"executed": True, "function": fn, "command": trace.get("command", "")}, reasons=[])
+                               runtime={"executed": True, "function": fn, "command": trace.get("command", "")}, reasons=[],
+                               confidence_factors=[{"factor": "runtime confirmation", "effect": "1.00",
+                                                    "note": f"{fn} executed under the profiler; no static estimate needed"}])
 
     unpinned = not dep.version
     # 2. Static path
@@ -213,7 +229,9 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         return Finding(adv, dep, spec, REACHABLE, round((spec.confidence or 0.5) * 0.9, 2), path=path, entry_kind="class definition",
                        reasons=[Reason("subclass", info.file, info.line, f"class {_last(info.qualname)} derives from {base}",
                                        "instances of this class carry the vulnerable behaviour; check where it is instantiated")],
-                       checklist={"call_sites": 0, "subclasses": len(subclass_hits)})
+                       checklist={"call_sites": 0, "subclasses": len(subclass_hits)},
+                       confidence_factors=[_base_factor(spec, 0.5),
+                                           {"factor": "subclass evidence", "effect": "x0.90", "note": "the vulnerable class is inherited, not called directly"}])
     # Explain references only for symbols no real call already shows, and only a few, so they never crowd out other evidence.
     called = {cs.callee for cs in unsafe_hits if id(cs) not in ref_ids}
     for cs in [cs for cs in unsafe_hits if id(cs) in ref_ids and cs.callee not in called][:3]:
@@ -236,19 +254,26 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                 listed.add((cs.file, cs.line))
                 others.append(Reason("also_called_at", cs.file, cs.line, cs.code, ""))
         conf = spec.confidence or 0.5
+        factors = [_base_factor(spec, 0.5),
+                   {"factor": f"entry point: {entry_kind}", "effect": "x1.00",
+                    "note": "a resolved call chain from application code to the vulnerable symbol"}]
         if id(best) in ref_ids:
             conf *= 0.9  # the best evidence is a reference: we assume, rather than see, the call
+            factors.append({"factor": "reference, not a call", "effect": "x0.90", "note": "the symbol is passed or stored as a value; the call is assumed"})
         if not imported and via:
             safe_notes.append(Reason("transitive", None, None,
                                      f"{dep.name} is reached through {', '.join(via)}, which the app imports", ""))
             conf *= 0.9
+            factors.append({"factor": "transitive", "effect": "x0.90", "note": f"reached through {', '.join(via)}"})
         if unpinned:
             safe_notes.append(Reason("version_unpinned", None, None, f"{dep.name} has no pinned version",
                                      f"pin {dep.name} and rescan; the installed version may already be at or past {adv.fixed_in or 'the fix'}"))
             conf *= 0.7
+            factors.append({"factor": "version unpinned", "effect": "x0.70", "note": "the installed version may already include the fix"})
         return Finding(adv, dep, spec, REACHABLE, round(conf, 2), path=path, entry_kind=entry_kind,
                        reasons=_order_reasons(safe_notes + others),
-                       checklist={"call_sites": len(unsafe_hits), "safe_call_sites": len(hits) - len(unsafe_hits)})
+                       checklist={"call_sites": len(unsafe_hits), "safe_call_sites": len(hits) - len(unsafe_hits)},
+                       confidence_factors=factors)
 
     # 3. Uncertainty sources
     by_name = {d.name: d for d in all_deps or []}
@@ -302,14 +327,27 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
     # 4. Not imported at all (and nothing dynamic that could import it)
     if not imported and not blocking:
         return Finding(adv, dep, spec, NOT_REACHABLE, round(max(spec.confidence, 0.9), 2), entry_kind=None,
-                       reasons=[Reason("not_imported", None, None, f"no module in {dep.import_names} is imported by the app", "")], checklist=checklist)
+                       reasons=[Reason("not_imported", None, None, f"no module in {dep.import_names} is imported by the app", "")], checklist=checklist,
+                       confidence_factors=[{"factor": "package never imported", "effect": f"floor 0.90",
+                                            "note": "independent of function data: no module of the package is imported anywhere and nothing dynamic could import it"}])
 
     if blocking:
         return Finding(adv, dep, spec, UNCERTAIN, round(min(spec.confidence or 0.5, 0.6), 2),
-                       reasons=_order_reasons(reasons), checklist=checklist)
+                       reasons=_order_reasons(reasons), checklist=checklist,
+                       confidence_factors=[_base_factor(spec, 0.5),
+                                           {"factor": "uncertain verdict", "effect": "cap 0.60",
+                                            "note": ", ".join(sorted({r.kind for r in blocking})) + ": the analysis could not resolve everything"}])
 
     # 5. Imported, no path, checklist clean
     seen_calls = sorted({f"{cs.callee} ({cs.file}:{cs.line})" for cs in app.calls if cs.callee and cs.callee.split('.')[0] in dep.import_names})[:6]
     detail = "all call sites use safe arguments" if hits else ("calls seen instead: " + ", ".join(seen_calls) if seen_calls else "imported but never called")
-    conf = (spec.confidence or 0.7) * (0.9 if any(cs.callee is None for cs in app.calls) else 1.0) * (0.8 if not spec.entry_api and exposure else 1.0)
-    return Finding(adv, dep, spec, NOT_REACHABLE, round(conf, 2), reasons=[Reason("no_path", None, None, detail, "")], checklist=checklist)
+    has_unresolved = any(cs.callee is None for cs in app.calls)
+    derived_only = bool(not spec.entry_api and exposure)
+    conf = (spec.confidence or 0.7) * (0.9 if has_unresolved else 1.0) * (0.8 if derived_only else 1.0)
+    factors = [_base_factor(spec, 0.7), {"factor": "soundness checklist", "effect": "x1.00", "note": f"all {sum(1 for v in checklist.values() if v is True)} checks passed"}]
+    if has_unresolved:
+        factors.append({"factor": "unresolved calls elsewhere", "effect": "x0.90", "note": "some receivers in the app could not be typed (none share a vulnerable name)"})
+    if derived_only:
+        factors.append({"factor": "public API derived", "effect": "x0.80", "note": "entry symbols were computed from the library source, not stated by the advisory"})
+    return Finding(adv, dep, spec, NOT_REACHABLE, round(conf, 2), reasons=[Reason("no_path", None, None, detail, "")], checklist=checklist,
+                   confidence_factors=factors)

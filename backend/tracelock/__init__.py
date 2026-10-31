@@ -11,7 +11,7 @@ from typing import Optional
 from . import app_graph, config as project_config, deps, kb, lib_graph, osv, pypi_source, verdict
 from .models import ScanResult, VulnSpec
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def _dedupe_advisories(advisories: dict) -> dict:

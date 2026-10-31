@@ -80,6 +80,8 @@ def _finding_text(f: Finding) -> str:
         lines.append(f"  reason:    [{r.kind}] {where}{r.detail}")
         if r.check:
             lines.append(f"  check:     {r.check}")
+    if f.confidence_factors:
+        lines.append("  confidence: " + " · ".join(f"{c['factor']} ({c['effect']})" for c in f.confidence_factors))
     if adv.fixed_in:
         lines.append(f"  fix:       upgrade {dep.name}>={adv.fixed_in}")
     return "\n".join(lines)
@@ -129,7 +131,11 @@ def explain(f: Finding) -> str:
         parts.append("TraceLock prefers UNCERTAIN over a wrong 'safe'.")
     if f.accepted:
         parts.append(f"This finding is accepted in .tracelock.yml ({f.accepted['reason']}) and does not affect the exit code; the OpenVEX output records it as not_affected.")
-    parts.append(f"Confidence {f.confidence:.2f} reflects how the functions were identified and how much of the call resolution was exact; it orders findings and never changes a verdict.")
+    if f.confidence_factors:
+        parts.append(f"Confidence {f.confidence:.2f} = " + "; ".join(f"{c['factor']} ({c['effect']}: {c['note']})" for c in f.confidence_factors)
+                     + ". Confidence orders findings and never changes a verdict.")
+    else:
+        parts.append(f"Confidence {f.confidence:.2f} reflects how the functions were identified and how much of the call resolution was exact; it orders findings and never changes a verdict.")
     return " ".join(parts)
 
 
