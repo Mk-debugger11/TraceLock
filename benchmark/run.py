@@ -5,24 +5,48 @@
     python benchmark/run.py --online   # allow OSV / PyPI network
 
 A false NOT_REACHABLE (expected REACHABLE or UNCERTAIN, got NOT_REACHABLE) is reported
-separately because it is the one failure the judges punish hardest.
+separately because it is the one failure the judges punish hardest. Also prints precision and
+recall for REACHABLE and NOT_REACHABLE, the noise-reduction numbers for real_flask_app, and
+writes benchmark/RESULTS.md (markdown, for the README).
 """
 from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "backend"))
 
 from tracelock import scan  # noqa: E402
-from tracelock.models import NOT_REACHABLE  # noqa: E402
+from tracelock.models import NOT_REACHABLE, REACHABLE, UNCERTAIN  # noqa: E402
+
+RESULTS = HERE / "RESULTS.md"
+NOISE_FIXTURE = "real_flask_app"
+
+
+def _pr(rows: list[tuple], label: str) -> tuple[int, int, int, str, str]:
+    tp = sum(1 for r in rows if r[2] == label and r[3] == label)
+    predicted = sum(1 for r in rows if r[3] == label)
+    expected = sum(1 for r in rows if r[2] == label)
+    precision = f"{tp / predicted:.2f}" if predicted else "n/a"
+    recall = f"{tp / expected:.2f}" if expected else "n/a"
+    return tp, predicted, expected, precision, recall
+
+
+def _reason(finding) -> str:
+    if finding is None:
+        return "advisory not reported"
+    kinds = sorted({r.kind for r in finding.reasons})
+    return f"tier={finding.spec.tier}" + (f", reasons={','.join(kinds)}" if kinds else "")
 
 
 def main() -> int:
     offline = "--online" not in sys.argv
     rows, failures, false_safe = [], 0, 0
+    notes: dict[tuple, str] = {}
+    noise = None
     for fixture in sorted(p for p in HERE.iterdir() if p.is_dir() and (p / "expected.json").exists()):
         expected = json.loads((fixture / "expected.json").read_text())
         try:
@@ -32,18 +56,29 @@ def main() -> int:
                 rows.append((fixture.name, adv_id, want, f"ERROR {exc}", "FAIL"))
                 failures += 1
             continue
-        got_by_id: dict[str, str] = {}
+        got_by_id: dict[str, object] = {}
         for f in result.findings:
             for key in [f.advisory.id, *f.advisory.aliases]:
-                got_by_id[key] = f.verdict
+                got_by_id[key] = f
         for adv_id, want in expected.items():
-            got = got_by_id.get(adv_id, "MISSING")
+            finding = got_by_id.get(adv_id)
+            got = finding.verdict if finding is not None else "MISSING"
             ok = got == want
             if not ok:
                 failures += 1
                 if got == NOT_REACHABLE:
                     false_safe += 1
+                notes[(fixture.name, adv_id)] = _reason(finding)
             rows.append((fixture.name, adv_id, want, got, "ok" if ok else "FAIL"))
+        if fixture.name == NOISE_FIXTURE:
+            noise = {
+                "packages": len(result.dependencies),
+                "advisories": len(result.findings),
+                "verdicts": Counter(f.verdict for f in result.findings),
+                "tiers": Counter(f.spec.tier for f in result.findings),
+                "headline": Counter(expected.values()),
+                "headline_got": Counter(got_by_id[a].verdict for a in expected if a in got_by_id),
+            }
 
     width = max(len(r[0]) for r in rows) if rows else 10
     print(f"{'fixture':<{width}}  {'advisory':<18} {'expected':<14} {'got':<14} result")
@@ -51,7 +86,73 @@ def main() -> int:
         print(f"{r[0]:<{width}}  {r[1]:<18} {r[2]:<14} {r[3]:<14} {r[4]}")
     total = len(rows)
     print(f"\n{total - failures}/{total} correct, {failures} wrong, {false_safe} FALSE SAFE (must be 0)")
+
+    metrics = {label: _pr(rows, label) for label in (REACHABLE, NOT_REACHABLE)}
+    for label, (tp, predicted, expected_n, precision, recall) in metrics.items():
+        print(f"{label:<14} precision {precision} ({tp}/{predicted})  recall {recall} ({tp}/{expected_n})")
+    uncertain = sum(1 for r in rows if r[3] == UNCERTAIN)
+    print(f"{'UNCERTAIN':<14} {uncertain}/{total} rows answered UNCERTAIN ({sum(1 for r in rows if r[2] == UNCERTAIN)} expected)")
+    for (fx, adv), why in notes.items():
+        print(f"  FAIL {fx} {adv}: {why}")
+    if noise:
+        v = noise["verdicts"]
+        print(f"{NOISE_FIXTURE}: {noise['advisories']} advisories on {noise['packages']} pinned packages -> "
+              f"{v[REACHABLE]} REACHABLE, {v[NOT_REACHABLE]} NOT_REACHABLE, {v[UNCERTAIN]} UNCERTAIN")
+
+    _write_results(rows, failures, false_safe, metrics, uncertain, notes, noise, offline)
     return 1 if failures else 0
+
+
+def _write_results(rows, failures, false_safe, metrics, uncertain, notes, noise, offline) -> None:
+    total = len(rows)
+    fixtures = len({r[0] for r in rows})
+    lines = [
+        "# TraceLock benchmark results",
+        "",
+        f"Generated by `python benchmark/run.py`{'' if offline else ' --online'} "
+        f"({'offline: bundled OSV snapshot, curated knowledge base, committed fix-commit data' if offline else 'online'}). "
+        "Do not edit by hand.",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| Fixtures | {fixtures} |",
+        f"| Expected verdicts | {total} |",
+        f"| Correct | {total - failures} ({(total - failures) / total:.0%}) |" if total else "| Correct | 0 |",
+        f"| **False NOT_REACHABLE (false safe)** | **{false_safe}** |",
+        "",
+        "| Verdict | Precision | Recall | True positives | Predicted | Expected |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for label, (tp, predicted, expected_n, precision, recall) in metrics.items():
+        lines.append(f"| {label} | {precision} | {recall} | {tp} | {predicted} | {expected_n} |")
+    lines.append(f"| UNCERTAIN | | | | {uncertain} | {sum(1 for r in rows if r[2] == UNCERTAIN)} |")
+    if noise:
+        v, t, h, hg = noise["verdicts"], noise["tiers"], noise["headline"], noise["headline_got"]
+        lines += [
+            "",
+            f"## Noise reduction: `{NOISE_FIXTURE}`",
+            "",
+            f"A ~200-line Flask app pinning {noise['packages']} packages at versions with known advisories.",
+            "",
+            "| | Advisories |",
+            "| --- | --- |",
+            f"| Affecting the pinned versions (what a dependency audit lists; OSV aliases merged) | {noise['advisories']} |",
+            f"| TraceLock REACHABLE | {v[REACHABLE]} |",
+            f"| TraceLock NOT_REACHABLE | {v[NOT_REACHABLE]} |",
+            f"| TraceLock UNCERTAIN | {v[UNCERTAIN]} |",
+            f"| ...with function-level data (curated / fix-commit / LLM tiers) | "
+            f"{sum(n for tier, n in t.items() if tier != 'none')} |",
+            "",
+            f"Headline advisories with ground truth in `expected.json` (one per package): expected "
+            f"{h[REACHABLE]} REACHABLE / {h[NOT_REACHABLE]} NOT_REACHABLE / {h[UNCERTAIN]} UNCERTAIN, got "
+            f"{hg[REACHABLE]} / {hg[NOT_REACHABLE]} / {hg[UNCERTAIN]}. Advisories without function-level data stay "
+            "UNCERTAIN by design (TraceLock never guesses NOT_REACHABLE).",
+        ]
+    lines += ["", "## All rows", "", "| Fixture | Advisory | Expected | Got | Result |", "| --- | --- | --- | --- | --- |"]
+    for r in rows:
+        mark = "ok" if r[4] == "ok" else f"**FAIL** ({notes.get((r[0], r[1]), '')})"
+        lines.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {mark} |")
+    RESULTS.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
