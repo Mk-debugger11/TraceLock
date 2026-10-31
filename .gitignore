@@ -9,3 +9,4 @@ venv/
 *.db
 .pytest_cache/
 workspace/
+.tracelock/
