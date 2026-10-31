@@ -1,0 +1,110 @@
+diff --git a/lib/yaml/constructor.py b/lib/yaml/constructor.py
+index 794681cb7..c42ee3440 100644
+--- a/lib/yaml/constructor.py
++++ b/lib/yaml/constructor.py
+@@ -722,18 +722,6 @@ def construct_python_object_new(self, suffix, node):
+     u'tag:yaml.org,2002:python/name:',
+     FullConstructor.construct_python_name)
+ 
+-FullConstructor.add_multi_constructor(
+-    u'tag:yaml.org,2002:python/module:',
+-    FullConstructor.construct_python_module)
+-
+-FullConstructor.add_multi_constructor(
+-    u'tag:yaml.org,2002:python/object:',
+-    FullConstructor.construct_python_object)
+-
+-FullConstructor.add_multi_constructor(
+-    u'tag:yaml.org,2002:python/object/new:',
+-    FullConstructor.construct_python_object_new)
+-
+ class UnsafeConstructor(FullConstructor):
+ 
+     def find_python_module(self, name, mark):
+@@ -750,6 +738,18 @@ def set_python_instance_state(self, instance, state):
+         return super(UnsafeConstructor, self).set_python_instance_state(
+             instance, state, unsafe=True)
+ 
++UnsafeConstructor.add_multi_constructor(
++    u'tag:yaml.org,2002:python/module:',
++    UnsafeConstructor.construct_python_module)
++
++UnsafeConstructor.add_multi_constructor(
++    u'tag:yaml.org,2002:python/object:',
++    UnsafeConstructor.construct_python_object)
++
++UnsafeConstructor.add_multi_constructor(
++    u'tag:yaml.org,2002:python/object/new:',
++    UnsafeConstructor.construct_python_object_new)
++
+ UnsafeConstructor.add_multi_constructor(
+     u'tag:yaml.org,2002:python/object/apply:',
+     UnsafeConstructor.construct_python_object_apply)
+diff --git a/lib3/yaml/constructor.py b/lib3/yaml/constructor.py
+index 1948b125c..619acd307 100644
+--- a/lib3/yaml/constructor.py
++++ b/lib3/yaml/constructor.py
+@@ -710,18 +710,6 @@ def construct_python_object_new(self, suffix, node):
+     'tag:yaml.org,2002:python/name:',
+     FullConstructor.construct_python_name)
+ 
+-FullConstructor.add_multi_constructor(
+-    'tag:yaml.org,2002:python/module:',
+-    FullConstructor.construct_python_module)
+-
+-FullConstructor.add_multi_constructor(
+-    'tag:yaml.org,2002:python/object:',
+-    FullConstructor.construct_python_object)
+-
+-FullConstructor.add_multi_constructor(
+-    'tag:yaml.org,2002:python/object/new:',
+-    FullConstructor.construct_python_object_new)
+-
+ class UnsafeConstructor(FullConstructor):
+ 
+     def find_python_module(self, name, mark):
+@@ -738,6 +726,18 @@ def set_python_instance_state(self, instance, state):
+         return super(UnsafeConstructor, self).set_python_instance_state(
+             instance, state, unsafe=True)
+ 
++UnsafeConstructor.add_multi_constructor(
++    'tag:yaml.org,2002:python/module:',
++    UnsafeConstructor.construct_python_module)
++
++UnsafeConstructor.add_multi_constructor(
++    'tag:yaml.org,2002:python/object:',
++    UnsafeConstructor.construct_python_object)
++
++UnsafeConstructor.add_multi_constructor(
++    'tag:yaml.org,2002:python/object/new:',
++    UnsafeConstructor.construct_python_object_new)
++
+ UnsafeConstructor.add_multi_constructor(
+     'tag:yaml.org,2002:python/object/apply:',
+     UnsafeConstructor.construct_python_object_apply)
+diff --git a/tests/lib/test_recursive.py b/tests/lib/test_recursive.py
+index 312204ead..04c57985b 100644
+--- a/tests/lib/test_recursive.py
++++ b/tests/lib/test_recursive.py
+@@ -30,7 +30,7 @@ def test_recursive(recursive_filename, verbose=False):
+     output2 = None
+     try:
+         output1 = yaml.dump(value1)
+-        value2 = yaml.load(output1, yaml.FullLoader)
++        value2 = yaml.load(output1, yaml.UnsafeLoader)
+         output2 = yaml.dump(value2)
+         assert output1 == output2, (output1, output2)
+     finally:
+diff --git a/tests/lib3/test_recursive.py b/tests/lib3/test_recursive.py
+index 74c2ee65f..08042c815 100644
+--- a/tests/lib3/test_recursive.py
++++ b/tests/lib3/test_recursive.py
+@@ -31,7 +31,7 @@ def test_recursive(recursive_filename, verbose=False):
+     output2 = None
+     try:
+         output1 = yaml.dump(value1)
+-        value2 = yaml.full_load(output1)
++        value2 = yaml.unsafe_load(output1)
+         output2 = yaml.dump(value2)
+         assert output1 == output2, (output1, output2)
+     finally:

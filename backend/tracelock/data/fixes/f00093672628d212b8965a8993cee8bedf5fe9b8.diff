@@ -1,0 +1,98 @@
+diff --git a/CHANGES.md b/CHANGES.md
+index c255c2a8347..ffd24feb31c 100644
+--- a/CHANGES.md
++++ b/CHANGES.md
+@@ -6,6 +6,14 @@
+ 
+ <!-- Include any especially major or disruptive changes here -->
+ 
++This release is a milestone: it fixes Black's first CVE security vulnerability. If you
++run Black on untrusted input, or if you habitually put thousands of leading tab
++characters in your docstrings, you are strongly encouraged to upgrade immediately to fix
++[CVE-2024-21503](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-21503).
++
++This release also fixes a bug in Black's AST safety check that allowed Black to make
++incorrect changes to certain f-strings that are valid in Python 3.12 and higher.
++
+ ### Stable style
+ 
+ <!-- Changes that affect Black's stable style -->
+@@ -36,7 +44,10 @@
+ 
+ ### Performance
+ 
+-<!-- Changes that improve Black's performance. -->
++- Fix catastrophic performance on docstrings that contain large numbers of leading tab
++  characters. This fixes
++  [CVE-2024-21503](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-21503).
++  (#4278)
+ 
+ ### Output
+ 
+diff --git a/src/black/strings.py b/src/black/strings.py
+index 0e0f968824b..baa88162844 100644
+--- a/src/black/strings.py
++++ b/src/black/strings.py
+@@ -14,7 +14,6 @@
+ STRING_PREFIX_RE: Final = re.compile(
+     r"^([" + STRING_PREFIX_CHARS + r"]*)(.*)$", re.DOTALL
+ )
+-FIRST_NON_WHITESPACE_RE: Final = re.compile(r"\s*\t+\s*(\S)")
+ UNICODE_ESCAPE_RE: Final = re.compile(
+     r"(?P<backslashes>\\+)(?P<body>"
+     r"(u(?P<u>[a-fA-F0-9]{4}))"  # Character with 16-bit hex value xxxx
+@@ -51,18 +50,13 @@ def lines_with_leading_tabs_expanded(s: str) -> List[str]:
+     """
+     lines = []
+     for line in s.splitlines():
+-        # Find the index of the first non-whitespace character after a string of
+-        # whitespace that includes at least one tab
+-        match = FIRST_NON_WHITESPACE_RE.match(line)
+-        if match:
+-            first_non_whitespace_idx = match.start(1)
+-
+-            lines.append(
+-                line[:first_non_whitespace_idx].expandtabs()
+-                + line[first_non_whitespace_idx:]
+-            )
+-        else:
++        stripped_line = line.lstrip()
++        if not stripped_line or stripped_line == line:
+             lines.append(line)
++        else:
++            prefix_length = len(line) - len(stripped_line)
++            prefix = line[:prefix_length].expandtabs()
++            lines.append(prefix + stripped_line)
+     if s.endswith("\n"):
+         lines.append("")
+     return lines
+diff --git a/tests/test_black.py b/tests/test_black.py
+index 70884152d58..ecea4a073a3 100644
+--- a/tests/test_black.py
++++ b/tests/test_black.py
+@@ -48,6 +48,7 @@
+ from black.output import color_diff, diff
+ from black.parsing import ASTSafetyError
+ from black.report import Report
++from black.strings import lines_with_leading_tabs_expanded
+ 
+ # Import other test classes
+ from tests.util import (
+@@ -2041,6 +2042,17 @@ def test_line_ranges_in_pyproject_toml(self) -> None:
+             b"Cannot use line-ranges in the pyproject.toml file." in result.stderr_bytes
+         )
+ 
++    def test_lines_with_leading_tabs_expanded(self) -> None:
++        # See CVE-2024-21503. Mostly test that this completes in a reasonable
++        # time.
++        payload = "\t" * 10_000
++        assert lines_with_leading_tabs_expanded(payload) == [payload]
++
++        tab = " " * 8
++        assert lines_with_leading_tabs_expanded("\tx") == [f"{tab}x"]
++        assert lines_with_leading_tabs_expanded("\t\tx") == [f"{tab}{tab}x"]
++        assert lines_with_leading_tabs_expanded("\tx\n  y") == [f"{tab}x", "  y"]
++
+ 
+ class TestCaching:
+     def test_get_cache_dir(

@@ -1,0 +1,15 @@
+diff --git a/src/PIL/ImageMath.py b/src/PIL/ImageMath.py
+index 7ca512e7568..cf108e2586f 100644
+--- a/src/PIL/ImageMath.py
++++ b/src/PIL/ImageMath.py
+@@ -237,6 +237,10 @@ def eval(expression, _dict={}, **kw):
+     args.update(_dict)
+     args.update(kw)
+     for k, v in args.items():
++        if '__' in k or hasattr(__builtins__, k):
++            msg = f"'{k}' not allowed"
++            raise ValueError(msg)
++
+         if hasattr(v, "im"):
+             args[k] = _Operand(v)
+ 
