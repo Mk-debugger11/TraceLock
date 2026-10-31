@@ -1,16 +1,28 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Shield,
   FolderArchive,
+  FolderOpen,
   GitBranch,
   ArrowRight,
   Loader2,
-  CheckCircle2,
   AlertCircle,
   UploadCloud,
   FileCode2,
   RefreshCw
 } from 'lucide-react'
+import { fetchBranches, getResult, getScan, submitScan } from './api'
+import Results from './Results'
+
+const POLL_MS = 1000
+
+const STAGE_LABELS = {
+  queued: 'Waiting for the worker',
+  repository_fetch: 'Fetching the project',
+  repository_fetched: 'Project fetched',
+  analysis: 'Tracing call paths to vulnerable functions',
+  analyzed: 'Done',
+}
 
 // Clean GitHub SVG icon
 const GithubIcon = ({ size = 16, className = '' }) => (
@@ -30,20 +42,57 @@ const GithubIcon = ({ size = 16, className = '' }) => (
   </svg>
 )
 
+// ?scan=<id> in the URL, so a refresh or a shared link reopens the same result.
+const initialScanId = () => new URLSearchParams(window.location.search).get('scan')
+
 function App() {
   const [repoType, setRepoType] = useState('github')
   const [repoUrl, setRepoUrl] = useState('')
   const [repoFile, setRepoFile] = useState(null)
+  const [localPath, setLocalPath] = useState('')
   const [branch, setBranch] = useState('main')
   const [branches, setBranches] = useState([])
   const [fetchingBranches, setFetchingBranches] = useState(false)
   const [branchError, setBranchError] = useState(null)
 
-  const [loading, setLoading] = useState(false)
-  const [response, setResponse] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [scanId, setScanId] = useState(initialScanId)
+  const [scan, setScan] = useState(null)
+  const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
 
   const fileInputRef = useRef(null)
+  const scanning = Boolean(scanId) && !result && !error
+
+  useEffect(() => {
+    if (!scanId) return
+    let cancelled = false
+    let timer
+
+    const poll = async () => {
+      try {
+        const status = await getScan(scanId)
+        if (cancelled) return
+        setScan(status)
+        if (status.status === 'done') {
+          const data = await getResult(scanId)
+          if (!cancelled) setResult(data)
+        } else if (status.status === 'failed') {
+          setError(status.error || 'The scan failed')
+        } else {
+          timer = setTimeout(poll, POLL_MS)
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message)
+      }
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [scanId])
 
   const handleFetchBranches = async () => {
     if (!repoUrl) return
@@ -51,19 +100,7 @@ function App() {
     setBranchError(null)
 
     try {
-      const res = await fetch('http://127.0.0.1:5001/api/branches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_url: repoUrl }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to fetch branches')
-      }
-
-      const branchNames = data.branches || []
+      const branchNames = (await fetchBranches(repoUrl)).branches || []
 
       if (branchNames.length === 0) {
         throw new Error('No branches found in this repository')
@@ -87,38 +124,36 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setLoading(true)
+    setSubmitting(true)
     setError(null)
-    setResponse(null)
+    setScan(null)
+    setResult(null)
+    setScanId(null)
 
     const formData = new FormData()
     formData.append('repo_type', repoType)
     if (repoType === 'github') {
       formData.append('repo_url', repoUrl)
-    } else if (repoFile) {
+      formData.append('branch', branch)
+    } else if (repoType === 'upload' && repoFile) {
       formData.append('repo_file', repoFile)
+    } else if (repoType === 'local') {
+      formData.append('path', localPath)
     }
-    formData.append('branch', branch)
     formData.append('scan_mode', 'full')
 
     try {
-      const res = await fetch('http://127.0.0.1:5001/api/analyze', {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!res.ok) {
-        throw new Error(`Server returned error status ${res.status}`)
-      }
-
-      const data = await res.json()
-      setResponse(data)
+      const { scan_id } = await submitScan(formData)
+      window.history.replaceState(null, '', `?scan=${encodeURIComponent(scan_id)}`)
+      setScanId(scan_id)
     } catch (err) {
       setError(err.message)
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
+
+  const busy = submitting || scanning
 
   return (
     <div>
@@ -132,7 +167,7 @@ function App() {
           Vulnerability Reachability Analyzer
         </h1>
         <p className="brand-subtitle">
-          Submit your Python repository to trace execution paths and reachability of dangerous dependencies.
+          Submit a Python project to see whether its code can actually reach the vulnerable functions in its dependencies.
         </p>
       </header>
 
@@ -146,7 +181,7 @@ function App() {
             onClick={() => setRepoType('github')}
           >
             <GithubIcon size={16} />
-            GitHub Repository
+            GitHub
           </button>
           <button
             type="button"
@@ -154,62 +189,109 @@ function App() {
             onClick={() => setRepoType('upload')}
           >
             <FolderArchive size={16} />
-            Upload Archive (.zip)
+            Upload .zip
+          </button>
+          <button
+            type="button"
+            className={`source-tab-btn ${repoType === 'local' ? 'active' : ''}`}
+            onClick={() => setRepoType('local')}
+          >
+            <FolderOpen size={16} />
+            Local folder
           </button>
         </div>
 
         <form onSubmit={handleSubmit}>
-          {repoType === 'github' ? (
-            /* GitHub URL Input */
-            <div className="form-group">
-              <label className="form-label">GitHub Repository URL</label>
-              <div className="input-with-action">
-                <div className="input-wrapper" style={{ flex: 1 }}>
-                  <span className="input-icon">
-                    <GithubIcon size={16} />
-                  </span>
-                  <input
-                    type="text"
-                    required
-                    className="text-input"
-                    placeholder="https://github.com/owner/repo"
-                    value={repoUrl}
-                    onChange={(e) => {
-                      setRepoUrl(e.target.value)
-                      setBranches([])
-                    }}
-                  />
+          {repoType === 'github' && (
+            <>
+              {/* GitHub URL Input */}
+              <div className="form-group">
+                <label className="form-label">GitHub Repository URL</label>
+                <div className="input-with-action">
+                  <div className="input-wrapper" style={{ flex: 1 }}>
+                    <span className="input-icon">
+                      <GithubIcon size={16} />
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      className="text-input"
+                      placeholder="https://github.com/owner/repo"
+                      value={repoUrl}
+                      onChange={(e) => {
+                        setRepoUrl(e.target.value)
+                        setBranches([])
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleFetchBranches}
+                    disabled={fetchingBranches || !repoUrl}
+                  >
+                    {fetchingBranches ? (
+                      <>
+                        <Loader2 size={14} className="spin" />
+                        Fetching
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} />
+                        Fetch Branches
+                      </>
+                    )}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleFetchBranches}
-                  disabled={fetchingBranches || !repoUrl}
-                >
-                  {fetchingBranches ? (
-                    <>
-                      <Loader2 size={14} className="spin" />
-                      Fetching
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw size={14} />
-                      Fetch Branches
-                    </>
-                  )}
-                </button>
+                {branchError && (
+                  <div className="helper-error">
+                    <AlertCircle size={13} />
+                    <span>{branchError}</span>
+                  </div>
+                )}
               </div>
-              {branchError && (
-                <div className="helper-error">
-                  <AlertCircle size={13} />
-                  <span>{branchError}</span>
+
+              {/* Branch / Commit Selection */}
+              <div className="form-group">
+                <label className="form-label">Target Branch / Commit</label>
+                <div className="input-wrapper">
+                  <GitBranch size={16} className="input-icon" />
+                  {branches.length > 0 ? (
+                    <select
+                      className="select-input"
+                      value={branch}
+                      onChange={(e) => setBranch(e.target.value)}
+                    >
+                      {branches.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      required
+                      className="text-input"
+                      value={branch}
+                      onChange={(e) => setBranch(e.target.value)}
+                      placeholder="e.g. main, master, or commit hash"
+                    />
+                  )}
                 </div>
-              )}
-            </div>
-          ) : (
+                {branches.length > 0 && (
+                  <div className="branch-counter">
+                    {branches.length} branches discovered
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {repoType === 'upload' && (
             /* File Upload Dropzone */
             <div className="form-group">
-              <label className="form-label">Repository Archive</label>
+              <label className="form-label">Project Archive</label>
               <div
                 className="dropzone"
                 onClick={() => fileInputRef.current?.click()}
@@ -219,13 +301,13 @@ function App() {
                   {repoFile ? 'Click to replace file' : 'Click to select project archive'}
                 </div>
                 <div className="dropzone-subtext">
-                  Supports .zip, .tar.gz, .tar
+                  .zip up to 50 MB
                 </div>
                 <input
                   ref={fileInputRef}
                   type="file"
                   required={!repoFile}
-                  accept=".zip,.tar.gz,.tar"
+                  accept=".zip"
                   onChange={(e) => setRepoFile(e.target.files[0])}
                 />
               </div>
@@ -241,44 +323,29 @@ function App() {
             </div>
           )}
 
-          {/* Branch / Commit Selection */}
-          <div className="form-group">
-            <label className="form-label">Target Branch / Commit</label>
-            <div className="input-wrapper">
-              <GitBranch size={16} className="input-icon" />
-              {branches.length > 0 ? (
-                <select
-                  className="select-input"
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                >
-                  {branches.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </select>
-              ) : (
+          {repoType === 'local' && (
+            <div className="form-group">
+              <label className="form-label">Folder on the server</label>
+              <div className="input-wrapper">
+                <FolderOpen size={16} className="input-icon" />
                 <input
                   type="text"
                   required
                   className="text-input"
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                  placeholder="e.g. main, master, or commit hash"
+                  placeholder="/absolute/path/to/project"
+                  value={localPath}
+                  onChange={(e) => setLocalPath(e.target.value)}
                 />
-              )}
-            </div>
-            {branches.length > 0 && (
-              <div className="branch-counter">
-                {branches.length} branches discovered
               </div>
-            )}
-          </div>
+              <div className="branch-counter">
+                The API must run with TRACELOCK_ALLOW_LOCAL_PATHS=1
+              </div>
+            </div>
+          )}
 
           {/* Submit Button */}
-          <button type="submit" className="btn-submit" disabled={loading}>
-            {loading ? (
+          <button type="submit" className="btn-submit" disabled={busy}>
+            {busy ? (
               <>
                 <Loader2 size={18} className="spin" />
                 <span>Running Reachability Analysis...</span>
@@ -293,13 +360,26 @@ function App() {
         </form>
       </div>
 
+      {/* Progress */}
+      {scanning && (
+        <div className="progress-card">
+          <div className="progress-head">
+            <span>{STAGE_LABELS[scan?.stage] || 'Starting scan'}</span>
+            <span className="progress-pct">{scan?.progress ?? 0}%</span>
+          </div>
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${scan?.progress ?? 0}%` }} />
+          </div>
+        </div>
+      )}
+
       {/* Error Output */}
       {error && (
         <div className="result-card error">
           <div className="result-header error">
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <AlertCircle size={16} />
-              <span>Analysis Request Failed</span>
+              <span>Analysis Failed</span>
             </div>
           </div>
           <div className="result-body">
@@ -308,21 +388,7 @@ function App() {
         </div>
       )}
 
-      {/* Response Output */}
-      {response && (
-        <div className="result-card success">
-          <div className="result-header success">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <CheckCircle2 size={16} />
-              <span>Backend Response Received</span>
-            </div>
-            <span style={{ fontSize: '11px', color: '#64748b' }}>HTTP 200 OK</span>
-          </div>
-          <div className="result-body">
-            <pre>{JSON.stringify(response, null, 2)}</pre>
-          </div>
-        </div>
-      )}
+      {result && <Results scanId={scanId} result={result} />}
     </div>
   )
 }

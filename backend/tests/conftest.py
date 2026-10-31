@@ -1,3 +1,5 @@
+from functools import partial
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -5,8 +7,30 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database.connection import Base, get_db
+from app.ingestion import local_loader
 from app.main import app
 from app.models import scan  # noqa: F401  (registers the Scan table)
+
+
+@pytest.fixture(autouse=True)
+def offline_engine(tmp_path, monkeypatch):
+    """The engine never touches the network in tests and unpacks sources into tmp, not the cwd."""
+    monkeypatch.setattr("app.worker.ANALYSIS_OFFLINE", True)
+    monkeypatch.setattr("tracelock.pypi_source.CACHE_SRC", tmp_path / "tl-cache" / "src")
+    monkeypatch.setattr("tracelock.pypi_source.CACHE_DL", tmp_path / "tl-cache" / "dl")
+
+
+@pytest.fixture()
+def workspace(tmp_path, monkeypatch):
+    """Point the API and worker at a temporary workspace instead of the real one."""
+    root = tmp_path / "workspace"
+    monkeypatch.setattr("app.api.repo_routes.upload_path", partial(local_loader.upload_path, workspace_root=root))
+    monkeypatch.setattr("app.worker.upload_path", partial(local_loader.upload_path, workspace_root=root))
+    monkeypatch.setattr(
+        "app.worker.fetch_local_directory", partial(local_loader.fetch_local_directory, workspace_root=root)
+    )
+    monkeypatch.setattr("app.worker.fetch_zip_archive", partial(local_loader.fetch_zip_archive, workspace_root=root))
+    return root
 
 
 @pytest.fixture()

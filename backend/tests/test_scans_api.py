@@ -113,6 +113,7 @@ def test_get_scan(client):
         "status": "queued",
         "stage": "queued",
         "progress": 0,
+        "source_type": "github",
         "error": None,
         "commit_sha": None,
         "python_file_count": None,

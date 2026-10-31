@@ -1,4 +1,10 @@
-"""Command line: `python -m tracelock.cli scan <path> [--json FILE] [--vex FILE] [--sarif FILE] [--offline] [--fail-on reachable|uncertain]`."""
+"""Command line.
+
+    python -m tracelock.cli scan <path> [--json FILE] [--vex FILE] [--sarif FILE] [--offline] [--no-sources] [--fail-on reachable|uncertain]
+    python -m tracelock.cli trace <path> [same output flags] [--timeout S] -- python app.py ...
+
+`scan` never executes the project. `trace` RUNS the given command under a profiler to confirm reachability.
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,30 +16,56 @@ from .models import REACHABLE, UNCERTAIN
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Everything after the first `--` is the traced command, passed through untouched
+    # (argparse.REMAINDER would also swallow our own options that follow the path).
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command: list[str] = []
+    if "--" in argv:
+        split = argv.index("--")
+        argv, command = argv[:split], argv[split + 1:]
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("path", type=Path)
+    common.add_argument("--json", type=Path, help="write full result JSON here")
+    common.add_argument("--vex", type=Path, help="write an OpenVEX document here")
+    common.add_argument("--sarif", type=Path, help="write a SARIF 2.1.0 file here")
+    common.add_argument("--offline", action="store_true", help="never touch the network; use bundled snapshots and caches")
+    common.add_argument("--fail-on", choices=["reachable", "uncertain"], default="reachable")
+    common.add_argument("--quiet", action="store_true")
+
     parser = argparse.ArgumentParser(prog="tracelock", description="Reachability-aware vulnerability scanner for Python projects")
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("scan", help="scan a project directory")
-    p.add_argument("path", type=Path)
-    p.add_argument("--json", type=Path, help="write full result JSON here")
-    p.add_argument("--vex", type=Path, help="write an OpenVEX document here")
-    p.add_argument("--sarif", type=Path, help="write a SARIF 2.1.0 file here")
-    p.add_argument("--offline", action="store_true", help="never touch the network; use bundled snapshots and caches")
+    p = sub.add_parser("scan", parents=[common], help="scan a project directory (static, never executes it)")
     p.add_argument("--no-sources", action="store_true", help="skip downloading dependency source (curated KB only)")
-    p.add_argument("--fail-on", choices=["reachable", "uncertain"], default="reachable")
-    p.add_argument("--quiet", action="store_true")
+    t = sub.add_parser("trace", parents=[common], usage="tracelock trace path [options] -- command ...",
+                       help="run the app under a profiler and confirm reachability at runtime (executes the code!)",
+                       epilog="Everything after -- is run inside <path>, e.g. -- python app.py config.yaml")
+    t.add_argument("--timeout", type=int, default=60, help="seconds before the traced command is killed")
     args = parser.parse_args(argv)
 
     if not args.path.is_dir():
         print(f"error: {args.path} is not a directory", file=sys.stderr)
         return 2
+    if command and args.command != "trace":
+        print("error: only `trace` takes a command after --", file=sys.stderr)
+        return 2
     try:
-        result = scan(args.path, offline=args.offline, fetch_sources=not args.no_sources)
+        if args.command == "trace":
+            from . import scan_with_trace
+
+            if not command:
+                print("error: give the command to run after --, e.g. -- python app.py", file=sys.stderr)
+                return 2
+            print(f"tracelock: executing `{' '.join(command)}` in {args.path} under the profiler", file=sys.stderr)
+            result = scan_with_trace(args.path, command, offline=args.offline, timeout=args.timeout)
+        else:
+            result = scan(args.path, offline=args.offline, fetch_sources=not args.no_sources)
     except Exception as exc:  # tool error, never a silent 'safe'
         print(f"error: scan failed: {exc}", file=sys.stderr)
         return 2
 
     if not args.quiet:
-        print(report.render_terminal(result))
+        report.print_terminal(result)
     if args.json:
         args.json.write_text(report.to_json(result), encoding="utf-8")
     if args.vex:

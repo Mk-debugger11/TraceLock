@@ -64,6 +64,7 @@ class ScanStatusResponse(BaseModel):
     status: str
     stage: str
     progress: int
+    source_type: str = "github"
     error: Optional[str] = None
     # Filled in once the repository has been fetched.
     commit_sha: Optional[str] = None
