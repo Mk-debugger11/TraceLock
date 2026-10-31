@@ -27,6 +27,11 @@ DYNAMIC_CALLS = {"getattr", "setattr", "eval", "exec", "compile", "__import__",
                  "pickle.loads", "pickle.load", "marshal.loads", "shelve.open", "dill.loads", "jsonpickle.decode"}
 BUILTIN_NAMES = {"getattr", "setattr", "eval", "exec", "compile", "__import__", "globals", "locals", "vars"}
 DESERIALIZERS = ("pickle", "marshal", "shelve", "dill", "jsonpickle")
+# Calls that inspect their arguments without calling them: `isinstance(x, yaml.FullLoader)` is not a use.
+NON_USE_CALLS = {"isinstance", "issubclass", "hasattr", "callable", "id", "type"}
+UNKNOWN = "?"            # an attribute assigned a value we could not resolve
+DEFERRED = "?call:"      # an attribute assigned the result of a module function defined further down
+_AMBIGUOUS = object()
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 _FILTER_RE = re.compile(r"\|\s*([A-Za-z_][A-Za-z0-9_]*)")
 
@@ -57,6 +62,19 @@ class CallSite:
 
 
 @dataclass
+class Reference:
+    """A symbol used as a value instead of called: `map(yaml.load, xs)`, `key=yaml.unsafe_load`, `loader = yaml.load`.
+    Whoever receives the value can call it, so the verdict engine treats a reference like a call."""
+    caller: str                            # qualname of the enclosing function (or "<mod>.<module>")
+    target: str                            # resolved dotted name of the referenced symbol
+    file: str
+    line: int
+    code: str
+    arg_of: Optional[str] = None           # resolved callee when the value is passed straight to a call
+    kwarg: Optional[str] = None            # the keyword it is passed as, if any
+
+
+@dataclass
 class DynamicMarker:
     kind: str                              # getattr | eval | exec | import | deserialize | sys_modules | globals
     file: str
@@ -82,10 +100,18 @@ class AppModel:
     star_imports: list = field(default_factory=list)       # (module imported from, file, line)
     imported_top_levels: dict = field(default_factory=dict)  # top-level module -> [(file, line)]
     returns: dict = field(default_factory=dict)            # function qualname -> dotted name its last `return` evaluates to
+    references: list = field(default_factory=list)         # list[Reference]
+    exports: dict = field(default_factory=dict)            # app module -> {top-level name: dotted name it is bound to}
+    attributes: dict = field(default_factory=dict)         # app class -> {attribute: set of dotted values (or UNKNOWN)}
     warnings: list = field(default_factory=list)
+    canonical_cache: dict = field(default_factory=dict, repr=False, compare=False)  # pass 2 only; emptied by build()
 
     def callers_of(self, qualname: str) -> list:
         return [c for c in self.calls if c.callee == qualname and c.caller != qualname]
+
+    def referrers_of(self, qualname: str) -> list:
+        """Functions that pass `qualname` around as a value (a callback registered, stored or returned)."""
+        return [r for r in self.references if r.target == qualname and r.caller != qualname]
 
     def method_in_bases(self, class_qual: str, method: str, _depth: int = 0) -> Optional[str]:
         """Resolve `class_qual.method` through the class's bases. Returns the first app method found,
@@ -121,13 +147,61 @@ def _module_name(root: Path, file: Path) -> str:
 
 
 class _ModuleAnalyzer:
-    def __init__(self, model: AppModel, module: str, rel_file: str, source: str):
+    def __init__(self, model: AppModel, module: str, rel_file: str, source: str, collect_tables: bool = False):
         self.model, self.module, self.file = model, module, rel_file
         self.lines = source.splitlines()
+        self.collect_tables = collect_tables   # pass 1 fills model.exports / model.attributes; pass 2 reads them
 
     # --- helpers -------------------------------------------------------------
     def code_at(self, line: int) -> str:
         return self.lines[line - 1].strip() if 0 < line <= len(self.lines) else ""
+
+    def canonical(self, dotted: Optional[str]) -> Optional[str]:
+        """Follow app-level indirections to the real symbol: re-exports (`helpers.load` -> `yaml.load` when
+        helpers.py does `from yaml import load`) and class attributes (`app.Cfg.parser.load` -> `yaml.load`
+        when a method does `self.parser = yaml`). An attribute with several or unknown values is None."""
+        if not self.collect_tables and dotted is not None:  # pass 2: the tables are final, so memoise
+            cache = self.model.canonical_cache
+            if dotted not in cache:
+                cache[dotted] = self._canonical(dotted)
+            return cache[dotted]
+        return self._canonical(dotted)
+
+    def _canonical(self, dotted: Optional[str]) -> Optional[str]:
+        for _ in range(8):
+            if not dotted or "." not in dotted:
+                return dotted
+            step = self._canonical_step(dotted)
+            if step is _AMBIGUOUS:
+                return None
+            if step is None or step == dotted:
+                return dotted
+            dotted = step
+        return dotted
+
+    def _canonical_step(self, dotted: str):
+        parts = dotted.split(".")
+        for i in range(len(parts) - 1, 0, -1):
+            owner, name, rest = ".".join(parts[:i]), parts[i], parts[i + 1:]
+            values = self.model.attributes.get(owner, {}).get(name)
+            if values:
+                if len(values) > 1 or UNKNOWN in values:
+                    return _AMBIGUOUS
+                return ".".join([next(iter(values)), *rest])
+            if owner in self.model.modules:
+                target = self.model.exports.get(owner, {}).get(name)
+                if target and target != f"{owner}.{name}":
+                    return ".".join([target, *rest])
+                return None
+        return None
+
+    def note_attribute(self, class_qual: str, name: str, value: Optional[str], node: Optional[ast.AST], scope: dict) -> None:
+        if not self.collect_tables:
+            return
+        if value is None and isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id not in scope:
+            # `self.session = make_session()` with `def make_session` further down: settled by _type_tables
+            value = f"{DEFERRED}{self.module}.{node.func.id}"
+        self.model.attributes.setdefault(class_qual, {}).setdefault(name, set()).add(value or UNKNOWN)
 
     def resolve(self, node: ast.AST, scope: dict) -> Optional[str]:
         """Dotted name for an expression, using the scope's bindings. None if unknown."""
@@ -135,10 +209,10 @@ class _ModuleAnalyzer:
             bound = scope.get(node.id)
             if bound is None and node.id in BUILTIN_NAMES:
                 return node.id
-            return bound
+            return self.canonical(bound)
         if isinstance(node, ast.Attribute):
             base = self.resolve(node.value, scope)
-            return f"{base}.{node.attr}" if base else None
+            return self.canonical(f"{base}.{node.attr}") if base else None
         if isinstance(node, ast.Call):
             # getattr(x, "name") used as a value, or a constructor call used as a value
             if isinstance(node.func, ast.Name) and node.func.id == "getattr":
@@ -150,10 +224,7 @@ class _ModuleAnalyzer:
             if not target:
                 return None
             # x = make_parser()  ->  x is the class make_parser() returns (one level, collected in pass 1).
-            ret = self.model.returns.get(target)
-            if ret and (self.model.functions.get(ret, FunctionInfo("", "", 0, 0)).is_class or ret.rsplit(".", 1)[-1][:1].isupper()):
-                return ret
-            return target
+            return _returned_class(self.model, target)
         return None
 
     def add_import_hit(self, top: str, line: int) -> None:
@@ -171,6 +242,9 @@ class _ModuleAnalyzer:
         self.model.functions[module_fn] = FunctionInfo(module_fn, self.file, 1, len(self.lines),
                                                        entry_kind="main" if has_main_block else "module")
         self.visit_block(tree.body, scope, self.module, module_fn, class_qual=None)
+        if self.collect_tables:  # what `from <this module> import name` gives other app modules
+            self.model.exports[self.module] = {k: v for k, v in scope.items()
+                                               if not k.startswith("self.") and v != f"{self.module}.{k}"}
 
     def visit_block(self, body: list, scope: dict, prefix: str, caller: str, class_qual: Optional[str]) -> None:
         for node in body:
@@ -233,12 +307,16 @@ class _ModuleAnalyzer:
             resolved = self.resolve(value, scope) if value is not None else None
             if resolved is None and isinstance(node, ast.AnnAssign):
                 resolved = self.resolve(node.annotation, scope)
-            if resolved:
-                for t in targets:
-                    if isinstance(t, ast.Name):
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    if resolved:
                         scope[t.id] = resolved
-                    elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self" and class_qual:
+                    if class_qual and prefix == class_qual:  # class body: `loader = yaml.load`
+                        self.note_attribute(class_qual, t.id, resolved, value, scope)
+                elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self" and class_qual:
+                    if resolved:
                         scope[f"self.{t.attr}"] = resolved
+                    self.note_attribute(class_qual, t.attr, resolved, value, scope)  # visible to every method of the class
         # Generic: scan every expression in this statement for calls, markers and strings,
         # then recurse into nested statement bodies with the same scope.
         for child in ast.iter_child_nodes(node):
@@ -251,7 +329,9 @@ class _ModuleAnalyzer:
             elif hasattr(ast, "match_case") and isinstance(child, ast.match_case):
                 self.visit_block(child.body, scope, prefix, caller, class_qual)
             else:
-                self.visit_expr(child, scope, caller)
+                # `x: yaml.FullLoader = None` names a type, it does not use the symbol
+                annotation = isinstance(node, ast.AnnAssign) and child is node.annotation
+                self.visit_expr(child, scope, caller, references=not annotation)
 
     def visit_function(self, node: ast.AST, scope: dict, prefix: str, class_qual: Optional[str]) -> None:
         qual = f"{prefix}.{node.name}"
@@ -275,6 +355,10 @@ class _ModuleAnalyzer:
                                                   entry_kind=entry_kind, decorators=decorators)
         inner = dict(scope)
         args = node.args
+        # `def parse(s, fn=yaml.load)` and `@retry(on=handler)`: evaluated in the enclosing scope, used by this function
+        decorator_args = [a for d in node.decorator_list if isinstance(d, ast.Call) for a in (*d.args, *(k.value for k in d.keywords))]
+        for expr in (*args.defaults, *(d for d in args.kw_defaults if d is not None), *decorator_args):
+            self.visit_expr(expr, scope, qual)
         all_args = [*args.posonlyargs, *args.args, *args.kwonlyargs]
         if args.vararg:
             all_args.append(args.vararg)
@@ -289,10 +373,30 @@ class _ModuleAnalyzer:
                     inner[a.arg] = resolved
         self.visit_block(node.body, inner, qual, qual, class_qual=class_qual)
 
-    def visit_expr(self, node: ast.AST, scope: dict, caller: str) -> None:
+    def visit_expr(self, node: ast.AST, scope: dict, caller: str, references: bool = True) -> None:
+        # ast.walk is breadth-first, so a parent is seen before its children: `skip` and `context` are
+        # filled in time. Skipped: call targets (`yaml.load` in `yaml.load(x)` is a call, not a value),
+        # the inner links of attribute chains, and the arguments of isinstance()/issubclass()/...
+        skip: set = set()
+        context: dict = {}   # id(argument node) -> (resolved callee it is passed to, keyword or None)
+        references = references and not self.collect_tables  # pass 1 output is discarded except its tables
         for sub in ast.walk(node):
             if isinstance(sub, ast.Call):
-                self.record_call(sub, scope, caller)
+                skip.add(id(sub.func))
+                if references:
+                    if isinstance(sub.func, ast.Name) and sub.func.id in NON_USE_CALLS:
+                        skip.update(id(a) for a in sub.args)
+                    callee = self.resolve(sub.func, scope)
+                    for a in sub.args:
+                        context[id(a)] = (callee, None)
+                    for kw in sub.keywords:
+                        context[id(kw.value)] = (callee, kw.arg)
+                self.record_call(sub, scope, caller, skip)
+            elif isinstance(sub, (ast.Name, ast.Attribute)):
+                if isinstance(sub, ast.Attribute):
+                    skip.add(id(sub.value))
+                if references and id(sub) not in skip and isinstance(sub.ctx, ast.Load):
+                    self.record_reference(sub, scope, caller, *context.get(id(sub), (None, None)))
             elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
                 if 2 < len(sub.value) < 80 and _IDENT_RE.match(sub.value):
                     self.model.strings.append(StringRef(self.file, getattr(sub, "lineno", 0), sub.value))
@@ -304,7 +408,13 @@ class _ModuleAnalyzer:
             elif isinstance(sub, (ast.Lambda,)):
                 pass
 
-    def record_call(self, call: ast.Call, scope: dict, caller: str) -> None:
+    def record_reference(self, node: ast.AST, scope: dict, caller: str, arg_of: Optional[str], kwarg: Optional[str]) -> None:
+        target = self.resolve(node, scope)
+        if target and "." in target:  # bare module names (`verify(jwt, ...)`) are not symbols that can be called
+            self.model.references.append(Reference(caller, target, self.file, node.lineno, self.code_at(node.lineno),
+                                                   arg_of=arg_of, kwarg=kwarg))
+
+    def record_call(self, call: ast.Call, scope: dict, caller: str, skip: Optional[set] = None) -> None:
         func = call.func
         resolved = self.resolve(func, scope)
         if isinstance(func, ast.Attribute):
@@ -352,6 +462,15 @@ class _ModuleAnalyzer:
                             "globals": "globals", "locals": "globals", "vars": "globals"}.get(name, "getattr")
                 self.model.dynamic.append(DynamicMarker(kind, self.file, call.lineno, self.code_at(call.lineno)))
                 return
+        if resolved == "functools.partial" and call.args:
+            # partial(f, k=v) is a deferred call f(k=v): record it as one, so safe-argument rules still apply
+            inner = self.resolve(call.args[0], scope)
+            if inner:
+                if skip is not None:
+                    skip.add(id(call.args[0]))
+                self.model.calls.append(CallSite(caller=caller, callee=inner, last_name=inner.rsplit(".", 1)[-1],
+                                                 file=self.file, line=call.lineno, code=self.code_at(call.lineno),
+                                                 kwargs=kwargs, receiver=None, kwargs_resolved=kwargs_resolved))
         self.model.calls.append(CallSite(caller=caller, callee=resolved, last_name=last, file=self.file,
                                          line=call.lineno, code=self.code_at(call.lineno), kwargs=kwargs, receiver=receiver,
                                          kwargs_resolved=kwargs_resolved))
@@ -367,6 +486,50 @@ def _resolve_inherited(model: AppModel) -> None:
             found = model.method_in_bases(owner, method)
             if found:
                 cs.callee = found
+
+
+def _returned_class(model: AppModel, target: str) -> str:
+    """`make_session()` evaluates to the class make_session returns, when pass 1 knows it; else to `target` itself."""
+    ret = model.returns.get(target)
+    if ret and (model.functions.get(ret, FunctionInfo("", "", 0, 0)).is_class or ret.rsplit(".", 1)[-1][:1].isupper()):
+        return ret
+    return target
+
+
+def _type_tables(model: AppModel) -> None:
+    """Pass 1 fills the attribute and export tables while it is still collecting return types, so
+    `self.session = make_session()` may be stored as the function. Re-type them now every return is known."""
+    def settle(v: str) -> str:
+        if v == UNKNOWN:
+            return v
+        if v.startswith(DEFERRED):
+            fn = v[len(DEFERRED):]
+            if fn not in model.functions:
+                return UNKNOWN
+            typed = _returned_class(model, fn)
+            return typed if typed != fn or model.functions[fn].is_class else UNKNOWN
+        return _returned_class(model, v)
+
+    for table in model.attributes.values():
+        for name, values in table.items():
+            table[name] = {settle(v) for v in values}
+    for table in model.exports.values():
+        for name, value in table.items():
+            table[name] = _returned_class(model, value)
+
+
+def _app_prefixed(model: AppModel, dotted: str) -> bool:
+    parts = dotted.split(".")
+    return any(".".join(parts[:i]) in model.modules for i in range(1, len(parts)))
+
+
+def _mark_phantoms(model: AppModel) -> None:
+    """Post-pass: a callee under an app module that names nothing the app defines (`app.Cfg.client.get` where
+    `self.client` is an untyped parameter, `helpers.CONFIG.load`) was never really resolved. Report it as
+    unresolved, so the verdict engine's same-name check sees it instead of a confident wrong name."""
+    for cs in model.calls:
+        if cs.callee and cs.callee not in model.functions and _app_prefixed(model, cs.callee):
+            cs.callee = None
 
 
 def build(root: Path) -> AppModel:
@@ -408,15 +571,19 @@ def build(root: Path) -> AppModel:
             except OSError:
                 pass
 
-    # Pass 1: return types only (into model.returns); everything else from this pass is discarded.
+    # Pass 1: return types, module exports and class attributes; everything else from this pass is discarded.
     for module, rel, source, tree in parsed:
-        _ModuleAnalyzer(model, module, rel, source).analyze(tree)
+        _ModuleAnalyzer(model, module, rel, source, collect_tables=True).analyze(tree)
+    _type_tables(model)  # needs pass 1's functions (is_class), so before they are reset
     returns = dict(model.returns)
     model.functions, model.calls, model.dynamic, model.star_imports, model.imported_top_levels = {}, [], [], [], {}
+    model.references = []
     model.strings = [s for s in model.strings if not s.file.endswith(".py")]
     model.returns = returns
-    # Pass 2: the real model, now able to type `x = make_thing()`.
+    # Pass 2: the real model, now able to type `x = make_thing()`, follow re-exports and `self.attr` values.
     for module, rel, source, tree in parsed:
         _ModuleAnalyzer(model, module, rel, source).analyze(tree)
     _resolve_inherited(model)
+    _mark_phantoms(model)
+    model.canonical_cache.clear()
     return model
