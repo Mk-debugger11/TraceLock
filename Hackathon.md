@@ -19,4 +19,4 @@
 ---
 
 ### AI Models
-- Not decided yet
+- Qwen 2.5 Coder - Understands Python ASTs, PEP 3155, and git diffs better than almost any other open model
