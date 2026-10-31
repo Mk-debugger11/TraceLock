@@ -1,0 +1,187 @@
+TRACELOCK BACKEND - WHAT IS DONE
+================================
+
+Stack: Python 3.11, FastAPI, SQLAlchemy, SQLite. (Flask has been removed.)
+Built so far: (1) Scan Submission API, (2) GitHub Repository Fetcher + background worker.
+Nothing scans dependencies, calls OSV, parses code or uses an LLM yet.
+
+
+RUN IT
+------
+  cd backend
+  ./venv/bin/python -m uvicorn app.main:app --port 5001 --reload     # server
+  ./venv/bin/python -m pytest                                        # tests (81)
+
+  Port 5001 is what the React frontend already calls (5000 is taken by macOS AirPlay).
+  Interactive API docs: http://127.0.0.1:5001/docs
+  The SQLite file is created automatically at backend/tracelock.db (gitignored).
+  Fetched repositories go to backend/workspace/scans/<scan_id>/repository (gitignored).
+  Settings (environment variables, all optional):
+    TRACELOCK_DATABASE_URL    different database
+    TRACELOCK_WORKSPACE_ROOT  different workspace folder
+    TRACELOCK_RUN_WORKER=0    do not start the worker with the API; run it yourself with
+                              `./venv/bin/python -m app.worker`  (run only ONE worker)
+
+
+FOLDER STRUCTURE
+----------------
+  backend/
+    requirements.txt            fastapi, uvicorn, python-multipart, SQLAlchemy, pytest, httpx
+    pytest.ini                  pytest only looks in tests/
+    app/
+      main.py                   creates the app, CORS, error handlers, creates tables, starts the worker
+      worker.py                 background worker process: claims queued scans, fetches them
+      api/
+        scan_routes.py          POST /api/scans, GET /api/scans/{scan_id}
+        repo_routes.py          POST /api/branches, POST /api/analyze
+      schemas/
+        scan.py                 request/response models + URL and ref validation
+      ingestion/
+        github_loader.py        fetch_repository(): git clone/fetch, workspace, Python file discovery
+      services/
+        scan_service.py         create/get scan + state changes used by the worker
+        repo_service.py         list_branches (runs `git ls-remote`)
+      models/
+        scan.py                 Scan table
+      database/
+        connection.py           SQLite engine, sessions, init_db, get_db
+    tests/
+      conftest.py               in-memory test database + test client
+      test_scans_api.py         scan endpoint tests
+      test_github_loader.py     fetcher tests (mocked git, fake git binary, real local git repo)
+      test_worker.py            worker / status-transition tests
+      test_repo_api.py          branches / analyze tests
+
+
+ENDPOINTS
+---------
+
+1) POST /api/scans            Queue a repository scan            -> 202 Accepted
+   Request:
+     {"repository_url": "https://github.com/owner/repository", "ref": "main"}
+   Response:
+     {"scan_id": "<uuid>", "status": "queued", "stage": "queued",
+      "progress": 0, "message": "Repository scan queued successfully"}
+
+   Validation (422 on failure):
+     repository_url  must be https://github.com/<owner>/<repo>. "www." is allowed, and a
+                     trailing "/" or ".git" is stripped. Stored as the clean form
+                     https://github.com/owner/repo. Rejected: other hosts, http://,
+                     user@ or port in the URL, query string, #fragment, extra path
+                     segments (e.g. /tree/main), invalid owner/repo names.
+     ref             branch name or commit SHA. Allowed characters: letters, digits
+                     . _ / -   (max 255). Rejected: blank, leading "-" "/" "." ,
+                     trailing "/" "." ".lock", "..", spaces and other special chars.
+                     A short SHA also passes (it looks like a branch name).
+     Missing fields are rejected: {"error": "repository_url is required; ref is required"}
+
+2) GET /api/scans/{scan_id}   Scan status
+   Response 200:
+     {"scan_id": "<uuid>", "repository_url": "https://github.com/owner/repository",
+      "ref": "main", "status": "queued", "stage": "queued", "progress": 0, "error": null,
+      "commit_sha": null, "python_file_count": null, "manifest_files": null}
+   The last three are filled in once the repository has been fetched (see below).
+   Unknown id -> 404 {"error": "Scan not found"}
+
+3) POST /api/branches         List branches of a public GitHub repo
+   Request:   {"repo_url": "octocat/Hello-World"}    ("owner/repo" or a full GitHub URL)
+   Response:  {"branches": ["master", "octocat-patch-1", "test"]}
+   Errors:    400 not a GitHub URL / repo not accessible, 504 git timed out (10 s)
+   Uses `git ls-remote`, so there are no GitHub API rate limits.
+
+4) POST /api/analyze          PLACEHOLDER used by the frontend's "Start Full Analysis"
+   Form data (multipart): repo_type, repo_url, branch, scan_mode (default "full"), repo_file
+   Response:  {"status": "success", "message": "Repository received for full analysis",
+               "received_data": {...echo of the fields...}}
+   It only echoes what it received. It does not create a scan yet.
+
+
+ERROR FORMAT
+------------
+  Every error is {"error": "<message>"} because that is what the frontend reads.
+  Database errors return 500 {"error": "Database error, please try again later"};
+  the real cause is only written to the server log (no stack traces sent to clients).
+
+
+REPOSITORY FETCHER AND WORKER
+-----------------------------
+Flow for one scan:
+  1. POST /api/scans saves the scan as status=queued, stage=queued, progress=0.
+  2. The worker (a separate process) polls the database every 2 s, claims the oldest queued
+     scan and sets status=running, stage=repository_fetch, progress=15.
+  3. It calls fetch_repository(scan_id, repository_url, ref).
+  4. Success: status=ready_for_analysis, stage=repository_fetched, progress=100, and the
+     commit_sha, workspace_path and metadata are saved. The next component starts here.
+     Failure: status=failed, error_message set (stage stays repository_fetch), workspace removed.
+  5. GET /api/scans/{scan_id} shows all of this at any time.
+  If the worker is killed mid-scan, the scan is put back in the queue when a worker starts.
+
+How the revision is selected (git CLI only, always a shallow depth-1 fetch, never a shell):
+  branch or tag   git clone --depth 1 --no-tags --single-branch --branch <ref> -- <url>.git <dir>
+  full commit SHA git init; git remote add origin <url>; git fetch --depth 1 origin <sha>;
+                  git checkout --detach FETCH_HEAD   (40 or 64 hex characters)
+  Then `git rev-parse HEAD` gives the commit SHA; for a SHA request it must equal the request.
+  A short SHA is treated as a branch name and will fail with "not found".
+
+Isolation: each scan gets workspace/scans/<scan_id>/repository. scan_id must be a UUID and the
+  resolved path must sit directly inside workspace/scans, so ids like "../x" are refused. A scan
+  never touches another scan's folder; re-running the same scan id starts from a clean folder.
+
+Python discovery (nothing is parsed or run): lists *.py files and requirements.txt,
+  pyproject.toml, poetry.lock, uv.lock, Pipfile.lock, as sorted paths relative to the repository
+  root. Skips .git .venv venv __pycache__ node_modules dist build. Symlinks are not followed.
+
+Result of fetch_repository (also stored in scans.repository_metadata):
+  {"scan_id", "repository_url", "ref", "commit_sha", "workspace_path", "python_files": [...],
+   "manifest_files": [...], "python_file_count": N, "status": "ready_for_analysis"}
+
+Safety measures: only https://github.com/<owner>/<repo> URLs; refs are validated (no leading "-");
+  arguments are passed as a list (no shell); 120 s timeout per git command, and a timed-out git
+  process group is killed; git prompts are disabled and system/global git config (credentials)
+  is ignored; submodules and Git LFS are not fetched; symlinks are checked out as plain files;
+  no repository code is run and nothing is pip-installed; users only see short error messages,
+  git's raw output goes to the server log only. No CPU/memory limits are set (timeout and
+  depth-1 only).
+
+Error messages stored in error_message:
+  "Invalid repository URL: ..." / "Invalid ref: ..."
+  "The requested branch or commit was not found in the repository"
+  "Could not access the repository. Make sure it exists and is public."
+  "Timed out while fetching the repository"
+  "Unexpected error while fetching the repository"
+
+
+SCAN DATABASE TABLE ("scans")
+-----------------------------
+  id              UUID string (primary key)
+  repository_url  normalised GitHub URL
+  ref             branch or commit SHA
+  commit_sha      resolved commit, set when fetched
+  status          queued -> running -> ready_for_analysis, or failed
+  stage           queued -> repository_fetch -> repository_fetched
+  progress        0 -> 15 -> 100
+  workspace_path  the repository folder, set when fetched
+  error_message   empty unless a scan fails
+  repository_metadata  JSON from the fetcher (python_files, manifest_files, ...)
+  created_at / updated_at   UTC timestamps
+
+
+CURL EXAMPLES
+-------------
+  curl -i -X POST http://127.0.0.1:5001/api/scans \
+    -H 'Content-Type: application/json' \
+    -d '{"repository_url":"https://github.com/owner/repository","ref":"main"}'
+
+  curl http://127.0.0.1:5001/api/scans/<scan_id>      # repeat until status is ready_for_analysis
+
+  curl -X POST http://127.0.0.1:5001/api/branches \
+    -H 'Content-Type: application/json' -d '{"repo_url":"octocat/Hello-World"}'
+
+
+NOT DONE YET (next tasks)
+-------------------------
+  - Dependency scanning (read the manifest files), OSV lookup, AST analysis, call graph,
+    reachability, LLM
+  - ZIP upload: /api/analyze accepts the file but does not store or scan it
+  - Frontend still calls POST /api/analyze (the placeholder), not POST /api/scans
+  - Workspace cleanup of old scans, and CPU/memory limits for git
