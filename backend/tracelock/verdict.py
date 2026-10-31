@@ -127,11 +127,19 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         if other.name != dep.name and dep.name in [r.lower() for r in other.requires] and app.imports_any(other.import_names):
             via.append(other.name)
 
-    # 1. Runtime confirmation
+    # 1. Runtime confirmation: a traced hit whose function belongs to this finding's targets.
     if trace and trace.get("executed"):
-        return Finding(adv, dep, spec, REACHABLE, 1.0,
-                       path=[CallStep(s.get("function", "?"), s.get("file", ""), s.get("line", 0), s.get("code", "")) for s in trace.get("stack", [])],
-                       entry_kind="runtime", runtime=trace, reasons=[])
+        for hit in trace.get("hits", []):
+            fn = hit.get("function", "")
+            if fn in targets or (fn.split(".")[0] in match_import_names and _last(fn) in last_names):
+                # Respect safe-usage rules at runtime: yaml.safe_load calls yaml.load(stream, SafeLoader).
+                args = hit.get("args", {})
+                if any(_last(fn) == _last(rule.get("func", "")) and _matches_safe(args.get(rule.get("kwarg", "")), rule.get("safe_values", []))
+                       for rule in spec.safe_usage):
+                    continue
+                stack = [CallStep(s.get("function", "?"), s.get("file", ""), s.get("line", 0), s.get("code", "")) for s in hit.get("stack", [])]
+                return Finding(adv, dep, spec, REACHABLE, 1.0, path=stack, entry_kind="runtime",
+                               runtime={"executed": True, "function": fn, "command": trace.get("command", "")}, reasons=[])
 
     # 2. Static path
     hits = [cs for cs in app.calls if _is_hit(cs, targets, last_names, match_import_names)]
