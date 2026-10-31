@@ -44,6 +44,7 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
 
     dependencies = deps.scan_dependencies(root)
     result.dependencies = dependencies
+    result.warnings.extend(list(getattr(deps, "WARNINGS", [])))
     if not dependencies:
         result.warnings.append("no pinned dependencies found (requirements*.txt with name==version, or pyproject.toml)")
 
@@ -75,8 +76,8 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
         if not advs:
             continue
         lib_src = source_for(dep)
-        directly_imported = bool(app.imports_any(dep.import_names))
-        bridges = [] if directly_imported else [
+
+        bridges = [
             other for other in dependencies
             if other.name != dep.name and dep.name in [r.lower() for r in other.requires] and app.imports_any(other.import_names)
         ]

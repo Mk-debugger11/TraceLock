@@ -334,7 +334,7 @@ class _ModuleAnalyzer:
                     kwargs[kw.arg] = "?"
                 kwargs_resolved[kw.arg] = self.resolve(kw.value, scope)
         # dynamic-feature markers
-        if resolved in DYNAMIC_CALLS or last in ("getattr", "setattr", "eval", "exec", "__import__"):
+        if resolved in DYNAMIC_CALLS or (resolved is None and receiver is None and last in ("getattr", "setattr", "eval", "exec", "__import__")):
             name = resolved or last
             literal_attr = name in ("getattr", "setattr") and len(call.args) >= 2 and isinstance(call.args[1], ast.Constant)
             if name == "getattr" and literal_attr:

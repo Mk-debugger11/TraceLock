@@ -63,7 +63,9 @@ def _safe_usage(cs: CallSite, spec: VulnSpec, app: AppModel) -> tuple[Optional[b
             safe_values = rule.get("safe_values", [])
             value = cs.kwargs.get(kwarg)
             if value is None:
-                return False, None  # kwarg absent: the library default applies (unsafe for these rules)
+                # kwarg absent: the library default applies. Rules say whether that default is safe
+                # (aiohttp follow_symlinks=False, werkzeug use_debugger=False) or not (yaml.load's FullLoader).
+                return bool(rule.get("missing_is_safe", False)), None
             resolved = cs.kwargs_resolved.get(kwarg)
             if _matches_safe(resolved, safe_values) or _matches_safe(value, safe_values):
                 return True, None
@@ -202,8 +204,9 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
     if spec.tier == TIER_NONE:
         reasons.append(Reason("no_function_data", None, None, f"{adv.id} names no vulnerable function and has no usable fix commit",
                               "read the advisory and fix manually; treat as affected until then"))
-    if not imported and via:
-        reasons.append(Reason("transitive", None, None, f"{dep.name} is not imported directly but is required by {', '.join(via)} which the app imports",
+    if via:
+        how = "is not imported directly but" if not imported else "is imported directly, and is also"
+        reasons.append(Reason("transitive", None, None, f"{dep.name} {how} required by {', '.join(via)} which the app imports",
                               f"check whether the {via[0]} APIs the app calls reach {dep.name}"))
 
     checklist = {
