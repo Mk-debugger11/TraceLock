@@ -98,7 +98,8 @@ Doubt always resolves to UNCERTAIN. A wrong "safe" is the one failure we are bui
 | `not_imported` | 4 vulns | NOT_REACHABLE |
 | `getattr_dynamic` | 4 vulns | UNCERTAIN, `app.py:6` |
 
-**12/12 correct, 0 FALSE SAFE** (`python benchmark/run.py`). Full table: `benchmark/RESULTS.md`.
+**65/65 correct across 38 fixture apps, 0 FALSE SAFE; precision and recall 1.00** for both REACHABLE
+and NOT_REACHABLE (`python benchmark/run.py`). Full table: `benchmark/RESULTS.md`.
 
 ```json
 { "vulnerability": { "name": "GHSA-8q59-q68h-6hv4", "aliases": ["CVE-2020-14343", "PYSEC-2021-142"] },
@@ -109,3 +110,43 @@ Doubt always resolves to UNCERTAIN. A wrong "safe" is the one failure we are bui
 ```
 
 <!-- Then switch to the live terminal: scan three_hop_chain, pyyaml_safe_load, getattr_dynamic, then trace pyyaml_direct. -->
+
+---
+
+# A real app: 108 advisories → 6 to fix
+
+`benchmark/real_flask_app`: a Flask notes app, 10 pinned packages. A dependency scanner lists **108 advisories**.
+
+| TraceLock | count | what you get |
+| --- | --- | --- |
+| **REACHABLE** | **6** | call path from a route to the bug, e.g. `views.index → weather.fetch_forecast → requests.Session.get → … → get_netrc_auth` |
+| **NOT_REACHABLE** | **7** | the checklist that proves it (pyyaml only via `yaml.safe_load`, pyjwt never imported, …) |
+| **UNCERTAIN** | **95** | the reason: 74 have no function data offline, 21 come in transitively, never a guess |
+
+Fix tonight: flask, werkzeug, requests ×3, urllib3. Prove the rest with a document, not a meeting.
+
+<!-- Fresh offline scan: tracelock scan benchmark/real_flask_app --offline. pillow alone is 50 of the 95 UNCERTAIN. -->
+
+---
+
+# Triage with an audit trail
+
+Decided a REACHABLE finding is not exploitable here? Record it, don't hide it: `.tracelock.yml`
+
+```yaml
+accept:
+  - id: CVE-2023-32681
+    reason: "no proxies are configured; Proxy-Authorization is never set"
+    by: mukul
+    until: 2026-12-31          # expires: after this date it counts again, with a warning
+    justification: vulnerable_code_cannot_be_controlled_by_adversary
+```
+
+- The report still says **REACHABLE `[ACCEPTED]`**: who, why, until when. The exit code ignores it.
+- OpenVEX says `not_affected` + your justification, so Trivy, Grype and Docker Scout stop alerting.
+- SARIF goes to GitHub **Security → Code scanning** from CI, call path as a code flow.
+
+```json
+{ "status": "not_affected", "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+  "impact_statement": "Accepted in .tracelock.yml (by mukul), until 2026-12-31: no proxies are configured; ... TraceLock verdict was REACHABLE." }
+```
