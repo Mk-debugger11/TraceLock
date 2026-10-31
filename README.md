@@ -75,6 +75,10 @@ npm install
 npm run dev
 ```
 
+Open http://localhost:3000. The dev server refuses to start if port 3000 is taken (the API's CORS only
+allows that port). A blank page with `React is not defined` in the browser console means an old dev
+server is running without `vite.config.js`: stop it and run `npm run dev` again.
+
 Submit a GitHub URL and branch, a `.zip` of the project, or (with `TRACELOCK_ALLOW_LOCAL_PATHS=1`) an
 absolute folder path on the server. The page polls the scan, then shows the summary, one card per
 finding with its call path, checklist or reasons, and JSON / OpenVEX / SARIF downloads. `?scan=<id>` in
@@ -228,7 +232,27 @@ Both formats were validated against the official OpenVEX and SARIF JSON schemas.
 
 ## Benchmark
 
-See [`benchmark/RESULTS.md`](benchmark/RESULTS.md) (table to be pasted here when it lands).
+`python benchmark/run.py` on the merged `main`:
+
+| fixture | advisory | expected | got | result |
+| --- | --- | --- | --- | --- |
+| getattr_dynamic | CVE-2020-14343 | UNCERTAIN | UNCERTAIN | ok |
+| getattr_dynamic | CVE-2020-1747 | UNCERTAIN | UNCERTAIN | ok |
+| not_imported | CVE-2020-14343 | NOT_REACHABLE | NOT_REACHABLE | ok |
+| not_imported | CVE-2020-1747 | NOT_REACHABLE | NOT_REACHABLE | ok |
+| pyyaml_direct | CVE-2020-14343 | REACHABLE | REACHABLE | ok |
+| pyyaml_direct | CVE-2020-1747 | REACHABLE | REACHABLE | ok |
+| pyyaml_safe_load | CVE-2020-14343 | NOT_REACHABLE | NOT_REACHABLE | ok |
+| pyyaml_safe_load | CVE-2020-1747 | NOT_REACHABLE | NOT_REACHABLE | ok |
+| pyyaml_safeloader_kwarg | CVE-2020-14343 | NOT_REACHABLE | NOT_REACHABLE | ok |
+| pyyaml_safeloader_kwarg | CVE-2020-1747 | NOT_REACHABLE | NOT_REACHABLE | ok |
+| three_hop_chain | CVE-2020-14343 | REACHABLE | REACHABLE | ok |
+| three_hop_chain | CVE-2020-1747 | REACHABLE | REACHABLE | ok |
+
+**12/12 correct, 0 wrong, 0 FALSE SAFE.**
+
+See [`benchmark/RESULTS.md`](benchmark/RESULTS.md) for the full benchmark write-up (coming with the
+benchmark PR).
 
 `python benchmark/run.py` scans every fixture in `benchmark/` offline and compares against its
 `expected.json`; a false NOT_REACHABLE is counted separately as **FALSE SAFE** and must stay at 0. Five
