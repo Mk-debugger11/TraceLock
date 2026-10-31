@@ -44,7 +44,7 @@ SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 def _finding_text(f: Finding) -> str:
     adv, dep, spec = f.advisory, f.dependency, f.spec
     fixed = f" -> fixed {adv.fixed_in}" if adv.fixed_in else ""
-    lines = [f"{f.verdict:<14}{adv.id}  {dep.name} {dep.version}{fixed}    confidence {f.confidence:.2f}"]
+    lines = [f"{f.verdict:<14}{adv.id}  {dep.name} {dep.version or "(unpinned)"}{fixed}    confidence {f.confidence:.2f}"]
     aliases = ", ".join(a for a in adv.aliases if a != adv.id)
     if aliases:
         lines.append(f"  aliases:   {aliases}")
@@ -137,6 +137,8 @@ def from_dict(data: dict) -> ScanResult:
 
 
 def _purl(f: Finding) -> str:
+    if not f.dependency.version:
+        return f"pkg:pypi/{f.dependency.name}"
     return f"pkg:pypi/{f.dependency.name}@{quote(f.dependency.version, safe='')}"
 
 

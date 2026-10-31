@@ -57,7 +57,7 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
     def source_for(d) -> Optional[Path]:
         if d.name not in source_cache:
             try:
-                source_cache[d.name] = pypi_source.fetch(d, offline=offline) if fetch_sources else None
+                source_cache[d.name] = pypi_source.fetch(d, offline=offline) if (fetch_sources and d.version) else None
             except Exception as exc:  # never let a download problem abort the scan
                 result.warnings.append(f"{d.name}=={d.version}: source unavailable ({exc})")
                 source_cache[d.name] = None
