@@ -16,3 +16,4 @@ frontend/node_modules/
 build/
 .DS_Store
 projects/
+Claude outputs/

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracelock"
-version = "0.2.0"
+version = "0.3.0"
 description = "Reachability-aware vulnerability scanner for Python projects: which CVEs can your code actually reach?"
 readme = "PACKAGE.md"
 requires-python = ">=3.10"

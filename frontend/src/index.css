@@ -860,3 +860,107 @@ body {
 .status-pill.done { color: var(--success, #22c55e); }
 .status-pill.failed { color: var(--danger, #ef4444); }
 .status-pill.running, .status-pill.queued { color: var(--warning, #f59e0b); }
+
+/* Why? expander and confidence factors */
+.finding-foot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.why {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.why-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.why-toggle:hover {
+  border-color: var(--border-focus);
+}
+
+.why-toggle .chev {
+  transition: transform 0.15s ease;
+}
+
+.why-toggle .chev.open {
+  transform: rotate(180deg);
+}
+
+.why-body {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.why-text {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-main);
+}
+
+.factors {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.factors li {
+  display: grid;
+  grid-template-columns: minmax(140px, auto) auto 1fr;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12.5px;
+}
+
+.factor-name {
+  color: var(--text-main);
+}
+
+.factor-effect {
+  font-family: var(--mono-font);
+  font-size: 12px;
+  color: #93c5fd;
+}
+
+.factor-note {
+  color: var(--text-dim);
+}
+
+.tag.accepted {
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.4);
+}
+
+.accepted-line {
+  margin: 0;
+  font-size: 13px;
+  color: #86efac;
+}
+
+@media (max-width: 640px) {
+  .factors li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

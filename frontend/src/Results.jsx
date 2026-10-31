@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import {
   ShieldAlert,
+  MessageCircleQuestion,
+  ChevronDown,
   ShieldCheck,
   CircleHelp,
   Download,
@@ -166,6 +169,50 @@ function Reasons({ reasons, title }) {
   )
 }
 
+function ConfidenceFactors({ factors }) {
+  if (!factors?.length) return null
+  return (
+    <ul className="factors">
+      {factors.map((c, i) => (
+        <li key={i}>
+          <span className="factor-name">{c.factor}</span>
+          <code className="factor-effect">{c.effect}</code>
+          <span className="factor-note">{c.note}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Why({ finding }) {
+  const [open, setOpen] = useState(false)
+  const explanation = finding.explanation
+  const factors = finding.confidence_factors
+  if (!explanation && !factors?.length) return null
+  return (
+    <div className="why">
+      <button type="button" className="why-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <MessageCircleQuestion size={14} />
+        Why?
+        <ChevronDown size={13} className={`chev ${open ? 'open' : ''}`} />
+      </button>
+      {open && (
+        <div className="why-body">
+          {explanation && <p className="why-text">{explanation}</p>}
+          {factors?.length > 0 && (
+            <>
+              <div className="section-title">
+                <span>How confidence {finding.confidence.toFixed(2)} was built</span>
+              </div>
+              <ConfidenceFactors factors={factors} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FindingCard({ finding }) {
   const { advisory, dependency, spec, verdict } = finding
   const v = VERDICTS[verdict] || VERDICTS.UNCERTAIN
@@ -184,13 +231,19 @@ function FindingCard({ finding }) {
           <span className="adv-id">{advisory.id}</span>
           {aliases.length > 0 && <span className="aliases">{aliases.join(' · ')}</span>}
         </div>
-        <span className="confidence">confidence {finding.confidence.toFixed(2)}</span>
+        {finding.accepted && <span className="tag accepted">accepted</span>}
+        <span
+          className="confidence"
+          title={(finding.confidence_factors || []).map((c) => `${c.factor} (${c.effect})`).join(' · ') || undefined}
+        >
+          confidence {finding.confidence.toFixed(2)}
+        </span>
       </header>
 
       <div className="pkg-line">
         <Package size={14} />
         <code>
-          {dependency.name} {dependency.version}
+          {dependency.name} {dependency.version || '(unpinned)'}
         </code>
         {advisory.fixed_in && (
           <>
@@ -218,12 +271,23 @@ function FindingCard({ finding }) {
         <Reasons reasons={finding.reasons} title={verdict === 'UNCERTAIN' ? 'Why uncertain' : 'Notes'} />
       )}
 
-      {fixUrl && (
-        <a className="fix-link" href={fixUrl} target="_blank" rel="noreferrer">
-          <GitCommitHorizontal size={14} />
-          fix commit
-        </a>
+      {finding.accepted && (
+        <p className="accepted-line">
+          Accepted in .tracelock.yml: {finding.accepted.reason}
+          {finding.accepted.by ? ` (by ${finding.accepted.by})` : ''}
+          {finding.accepted.until ? `, until ${finding.accepted.until}` : ''} — not counted in the exit code; OpenVEX records it as not_affected.
+        </p>
       )}
+
+      <div className="finding-foot">
+        <Why finding={finding} />
+        {fixUrl && (
+          <a className="fix-link" href={fixUrl} target="_blank" rel="noreferrer">
+            <GitCommitHorizontal size={14} />
+            fix commit
+          </a>
+        )}
+      </div>
     </article>
   )
 }

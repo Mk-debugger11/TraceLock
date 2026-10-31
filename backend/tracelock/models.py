@@ -90,6 +90,7 @@ class Finding:
     checklist: dict = field(default_factory=dict)           # name -> bool, printed for NOT_REACHABLE
     runtime: Optional[dict] = None                          # {"executed": true, "stack": [...]} from the tracer
     accepted: Optional[dict] = None                         # {"reason", "by", "until", "justification"} from .tracelock.yml
+    confidence_factors: list[dict] = field(default_factory=list)  # [{"factor", "effect", "note"}]: how `confidence` was built
 
 
 @dataclass
@@ -103,7 +104,10 @@ class ScanResult:
 
 def to_dict(result: ScanResult) -> dict:
     """JSON-ready dict; the advisory's raw OSV record is dropped to keep output small."""
+    from . import report  # local import: report depends on this module
+
     data = asdict(result)
-    for finding in data.get("findings", []):
+    for finding, obj in zip(data.get("findings", []), result.findings):
         finding.get("advisory", {}).pop("raw", None)
+        finding["explanation"] = report.explain(obj)   # plain-language "why", for --explain and the UI's Why? button
     return data
