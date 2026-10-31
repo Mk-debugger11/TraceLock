@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tracelock import cli, report, scan
+from tracelock.models import CallStep
 
 BENCHMARK = Path(__file__).resolve().parents[2] / "benchmark"
 
@@ -77,6 +78,49 @@ def test_print_terminal_falls_back_to_plain_text(results, monkeypatch):
     out = io.StringIO()
     report.print_terminal(results["three_hop_chain"], file=out)
     assert out.getvalue() == report.render_terminal(results["three_hop_chain"]) + "\n"
+
+
+def test_runtime_finding_is_rendered_as_confirmed(results):
+    import copy
+
+    result = copy.deepcopy(results["three_hop_chain"])
+    f = result.findings[0]
+    f.entry_kind, f.confidence = "runtime", 1.0
+    f.runtime = {"executed": True, "function": "yaml.full_load", "command": "python -m app.main"}
+    f.path = [
+        CallStep("main", "app/main.py", 5, 'settings = load_settings("settings.yaml")'),
+        CallStep("_read", "app/settings.py", 5, "return y.full_load(fh)"),
+        CallStep("full_load", "/abs/site-packages/yaml/__init__.py", 140, "def full_load(stream):"),
+    ]
+
+    text = report.render_terminal(result)
+    assert "runtime:   CONFIRMED, yaml.full_load executed under `python -m app.main`" in text
+    assert "app/settings.py:5 | return y.full_load(fh)" in text  # call site is the app frame, not the library one
+
+    sarif = json.loads(report.to_sarif(result))["runs"][0]["results"][0]
+    assert sarif["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "app/settings.py"
+    library = sarif["codeFlows"][0]["threadFlows"][0]["locations"][-1]["location"]["physicalLocation"]["artifactLocation"]
+    assert library == {"uri": "file:///abs/site-packages/yaml/__init__.py"}
+
+
+def test_cli_trace_passes_command_after_double_dash(monkeypatch, capsys):
+    import tracelock
+
+    calls = []
+
+    def fake_scan_with_trace(path, command, offline, timeout):
+        calls.append((path.name, command, offline, timeout))
+        return scan(path, offline=True, fetch_sources=False)
+
+    monkeypatch.setattr(tracelock, "scan_with_trace", fake_scan_with_trace)
+    code = cli.main(["trace", str(BENCHMARK / "pyyaml_direct"), "--offline", "--quiet", "--timeout", "5",
+                     "--", "python", "-m", "app.main", "--", "config.yaml"])
+    assert code == 1
+    assert calls == [("pyyaml_direct", ["python", "-m", "app.main", "--", "config.yaml"], True, 5)]
+    assert "executing `python -m app.main -- config.yaml`" in capsys.readouterr().err
+
+    assert cli.main(["trace", str(BENCHMARK / "pyyaml_direct")]) == 2  # no command given
+    assert cli.main(["scan", str(BENCHMARK / "pyyaml_direct"), "--", "python", "x.py"]) == 2
 
 
 def test_cli_writes_vex_and_sarif(tmp_path, capsys):

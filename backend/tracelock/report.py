@@ -56,12 +56,14 @@ def _finding_text(f: Finding) -> str:
     if f.verdict == REACHABLE and f.path:
         chain = "  ->  ".join(f"{s.file}:{s.line} {s.qualname}" if s.file else s.qualname for s in f.path)
         lines.append(f"  path:      {chain}")
-        site = next((s for s in reversed(f.path) if s.file), None)
+        site = _call_site(f.path)
         if site:
             lines.append(f"             {site.file}:{site.line} | {site.code}")
         lines.append(f"  entry:     {f.entry_kind}")
-        if f.runtime:
-            lines.append("  runtime:   CONFIRMED, the vulnerable function executed during the trace")
+    if f.entry_kind == "runtime" or (f.runtime and f.runtime.get("executed")):
+        fn = (f.runtime or {}).get("function")
+        cmd = (f.runtime or {}).get("command")
+        lines.append(f"  runtime:   CONFIRMED, {fn or 'the vulnerable function'} executed" + (f" under `{cmd}`" if cmd else ""))
     if f.verdict == NOT_REACHABLE:
         ticks = "  ".join(f"{k} {'ok' if v else 'NO'}" for k, v in f.checklist.items() if isinstance(v, bool))
         lines.append(f"  checklist: {ticks}")
@@ -196,13 +198,21 @@ def to_openvex(result: ScanResult) -> str:
     return json.dumps(document, indent=2)
 
 
+def _in_project(step: CallStep) -> bool:
+    """Static steps are relative to the scanned root; runtime traces also contain absolute library frames."""
+    return bool(step.file) and not Path(step.file).is_absolute() and not step.file.startswith("site-packages/")
+
+
 def _call_site(path: list[CallStep]) -> Optional[CallStep]:
     """The last step inside the app: the line that calls the vulnerable symbol."""
-    return next((s for s in reversed(path) if s.file and s.line > 0), None)
+    return next((s for s in reversed(path) if _in_project(s) and s.line > 0), None)
 
 
 def _physical(file: str, line: int) -> dict:
-    location = {"artifactLocation": {"uri": file.replace("\\", "/"), "uriBaseId": "%SRCROOT%"}}
+    if Path(file).is_absolute():
+        location = {"artifactLocation": {"uri": Path(file).as_uri()}}
+    else:
+        location = {"artifactLocation": {"uri": file.replace("\\", "/"), "uriBaseId": "%SRCROOT%"}}
     if line > 0:
         location["region"] = {"startLine": line}
     return {"physicalLocation": location}
