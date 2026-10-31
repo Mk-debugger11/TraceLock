@@ -90,13 +90,21 @@ def resolve(adv: Advisory, dep: Dependency, lib_src: Optional[Path] = None, offl
             if spec.tier == TIER_NONE:
                 spec.tier, spec.confidence = TIER_FIX_COMMIT, 0.7
 
-    # LLM tier proposes public entry points; every name must exist in the library source.
-    if spec.vulnerable_funcs and not spec.entry_api and lib_src is not None and not offline:
-        try:
-            proposed = llm.propose_entry_api(adv, dep, spec, lib_src)
-        except Exception:
-            proposed = []
-        verified = [name for name in proposed if llm.symbol_exists(lib_src, dep, name)]
+    # LLM tier proposes public entry points; every name must exist in the library source
+    # ("LLM proposes, AST verifies"). Cache first, so offline runs reuse earlier answers; without
+    # the source only names already verified against this exact version are reused.
+    if spec.vulnerable_funcs and not spec.entry_api:
+        verified: list[str] = []
+        if lib_src is not None:
+            try:
+                proposed = llm.propose_entry_api(adv, dep, spec, lib_src, offline=offline)
+            except Exception:
+                proposed = []
+            verified = [name for name in proposed if llm.symbol_exists(lib_src, dep, name)]
+            if proposed:
+                llm.record_verified(adv, dep, verified)
+        else:
+            verified = llm.cached_verified(adv, dep)
         if verified:
             spec.entry_api = verified
             if spec.tier == TIER_FIX_COMMIT:

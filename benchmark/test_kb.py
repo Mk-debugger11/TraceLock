@@ -158,6 +158,59 @@ def test_fix_tier_without_entry_points_cannot_claim_safety():
     assert kb.resolve(adv, dep, offline=True).tier == TIER_CURATED
 
 
+
+def _fake_package(root: Path) -> Path:
+    pkg = root / "fakepkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("from .core import Client\n\ndef real_api(data):\n    return Client().fetch(data)\n")
+    (pkg / "core.py").write_text("def _danger(x):\n    return eval(x)\n\nclass Client:\n    def fetch(self, data):\n        return _danger(data)\n")
+    return root
+
+
+def test_llm_hallucinated_name_is_dropped_and_cache_is_reused_offline():
+    import tempfile
+    from tracelock.kb import llm
+    from tracelock.models import TIER_LLM, Advisory
+    seen = {}
+
+    def fake_llm(system, prompt):
+        seen["prompt"] = prompt
+        return "fake", "fake-model", '```json\n{"entry_api": ["fakepkg.real_api", "fakepkg.Client.fetch", ' \
+                                     '"fakepkg.made_up_function", "fakepkg.core.totally_real"], "reasoning": "x"}\n```'
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        lib_src = _fake_package(tmp / "src")
+        saved = (llm._transport_override, llm.LOCAL_CACHE, llm.DATA_CACHE, fixdiff.functions_from_fix)
+        llm._transport_override = fake_llm
+        llm.LOCAL_CACHE, llm.DATA_CACHE = tmp / "cache", tmp / "data"
+        fixdiff.functions_from_fix = lambda adv, dep, offline=False: (
+            ["fakepkg.core._danger"], ["@@ -1,2 +1,2 @@ def _danger(x):\n-    return eval(x)"], "https://github.com/x/fakepkg/commit/abc")
+        try:
+            adv = Advisory(id="GHSA-fake-0000-0001", summary="code execution in fetch",
+                           fix_urls=["https://github.com/x/fakepkg/commit/abc"])
+            dep = Dependency("fakepkg", "1.0", import_names=["fakepkg"])
+            spec = kb.resolve(adv, dep, lib_src=lib_src, offline=False)
+            assert spec.tier == TIER_LLM, spec.tier
+            assert spec.entry_api == ["fakepkg.real_api", "fakepkg.Client.fetch"], spec.entry_api
+            assert "fakepkg.made_up_function" not in spec.targets() and "fakepkg.core.totally_real" not in spec.targets()
+            assert "fakepkg.real_api" in seen["prompt"] and "_danger" not in seen["prompt"].split("choose ONLY from this list):")[1]
+            # offline, no source: only names verified earlier for this exact version come back
+            llm._transport_override = lambda s, p: (_ for _ in ()).throw(AssertionError("network used offline"))
+            again = kb.resolve(adv, dep, lib_src=None, offline=True)
+            assert again.tier == TIER_LLM and again.entry_api == spec.entry_api, (again.tier, again.entry_api)
+            other = kb.resolve(adv, Dependency("fakepkg", "2.0", import_names=["fakepkg"]), lib_src=None, offline=True)
+            assert other.tier == TIER_NONE and not other.entry_api  # not verified for 2.0 -> safety net
+        finally:
+            llm._transport_override, llm.LOCAL_CACHE, llm.DATA_CACHE, fixdiff.functions_from_fix = saved
+
+
+def test_llm_parse_response_is_defensive():
+    from tracelock.kb import llm
+    assert llm.parse_response("no json here")["entry_api"] == []
+    assert llm.parse_response('{"entry_api": ["a.b", 3, null, " c.d "]}')["entry_api"] == ["a.b", "c.d"]
+    assert llm.parse_response('{"entry_api": "a.b"}')["entry_api"] == []
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0
@@ -165,7 +218,7 @@ if __name__ == "__main__":
         try:
             fn()
             print(f"ok    {name}")
-        except AssertionError as exc:
+        except Exception as exc:  # any error is a failed test
             failed += 1
             print(f"FAIL  {name}: {exc}")
     print(f"\n{len(tests) - failed}/{len(tests)} passed")
