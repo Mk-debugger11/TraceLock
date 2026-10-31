@@ -7,9 +7,10 @@ never become a target. The LLM never decides a verdict.
 Prompt = advisory summary + details + fix-commit hunks + the functions the fix touched + up to 400
 public dotted names from the package source (_symbols_in). Answer format:
     {"entry_api": [...], "vulnerable_funcs": [...], "reasoning": "..."}
-Providers (plain urllib, no SDK): ANTHROPIC_API_KEY (Messages API), else OPENAI_API_KEY (chat
-completions), else a local Ollama at OLLAMA_HOST (default http://localhost:11434) when
-TRACELOCK_LLM=ollama. Model names: TRACELOCK_LLM_MODEL (defaults below).
+Providers (plain urllib, no SDK): a local Ollama at OLLAMA_HOST (default http://localhost:11434) when
+TRACELOCK_LLM=ollama (open-weight models, nothing leaves the machine); any OpenAI-compatible server via
+OPENAI_API_KEY + OPENAI_BASE_URL (vLLM, Groq, Together, OpenRouter serving Llama/Qwen/...); or ANTHROPIC_API_KEY.
+Model names: TRACELOCK_LLM_MODEL (defaults below).
 
 Cache: tracelock/data/llm_cache/<advisory_id>.json (committed) and .tracelock/cache/llm/ (local).
 The cache is read first, so demos never wait on the network; it also records which proposals
@@ -46,7 +47,7 @@ SRC_CACHE = Path(".tracelock") / "cache" / "src"
 MAX_SYMBOLS = 400
 MAX_DETAILS = 2500
 MAX_HUNK_CHARS = 6000
-DEFAULT_MODELS = {"anthropic": "claude-sonnet-5-5", "openai": "gpt-4o-mini", "ollama": "llama3.1"}
+DEFAULT_MODELS = {"anthropic": "claude-sonnet-5-5", "openai": "gpt-4o-mini", "ollama": "qwen2.5-coder:7b"}
 SYSTEM = ("You map security advisories for Python packages to the public API an application would call to "
           "reach the vulnerable code. Answer with one JSON object and nothing else.")
 
@@ -171,7 +172,8 @@ def _call_llm(system: str, prompt: str) -> tuple[str, str, str]:
         return "anthropic", model, text
     if os.environ.get("OPENAI_API_KEY") and os.environ.get("TRACELOCK_LLM", "openai") in ("openai", "anthropic"):
         model = model or DEFAULT_MODELS["openai"]
-        data = _post_json("https://api.openai.com/v1/chat/completions",
+        base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        data = _post_json(f"{base}/chat/completions",
                           {"model": model, "temperature": 0, "response_format": {"type": "json_object"},
                            "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]},
                           {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"})
@@ -183,7 +185,7 @@ def _call_llm(system: str, prompt: str) -> tuple[str, str, str]:
                                                "messages": [{"role": "system", "content": system},
                                                             {"role": "user", "content": prompt}]}, {})
         return "ollama", model, data.get("message", {}).get("content", "")
-    raise RuntimeError("no LLM configured (set ANTHROPIC_API_KEY or OPENAI_API_KEY, or TRACELOCK_LLM=ollama)")
+    raise RuntimeError("no LLM configured (TRACELOCK_LLM=ollama for a local open model, or OPENAI_API_KEY [+ OPENAI_BASE_URL], or ANTHROPIC_API_KEY)")
 
 
 def parse_response(text: str) -> dict:
