@@ -6,6 +6,7 @@ of source text, two-level transitive exposure, per-target reasons, trace integra
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 from .app_graph import AppModel, CallSite
@@ -26,20 +27,63 @@ def _is_hit(cs: CallSite, targets: set[str], last_names: set[str], import_names:
     return top in import_names and cs.last_name in last_names
 
 
-def _safe_usage(cs: CallSite, spec: VulnSpec) -> tuple[Optional[bool], Optional[str]]:
-    """(True=safe, False=unsafe, None=no rule) and a note when the argument is a variable."""
+ENTRY_RANK = {"main": 0, "route": 1, "module": 2, "test": 3, "runtime": 0, "orphan": 9}
+REASON_RANK = {"unresolved_call": 0, "string_ref": 1, "star_import": 2, "transitive": 3, "dynamic": 4,
+               "no_function_data": 5, "safe_arg_variable": 6, "also_called_at": 7}
+MAX_REASONS = 8
+
+
+def _matches_safe(value: Optional[str], safe_values: list[str]) -> bool:
+    return bool(value) and (value in safe_values or _last(value) in safe_values)
+
+
+def _class_is_safe(app: AppModel, class_qual: str, safe_values: list[str], depth: int = 0) -> Optional[bool]:
+    """True if an app class ultimately derives from a safe value, False if from an unsafe library class, None if unknown."""
+    info = app.functions.get(class_qual)
+    if info is None or not info.is_class or depth > 8:
+        return None
+    for base in info.bases:
+        if _matches_safe(base, safe_values):
+            return True
+        if base in app.functions:
+            inner = _class_is_safe(app, base, safe_values, depth + 1)
+            if inner is not None:
+                return inner
+        elif "." in base:
+            return False  # derives from some other library class (e.g. yaml.FullLoader)
+    return None
+
+
+def _safe_usage(cs: CallSite, spec: VulnSpec, app: AppModel) -> tuple[Optional[bool], Optional[str]]:
+    """(True=safe, False=unsafe, None=no rule) and a note when the argument is a variable we cannot resolve."""
     for rule in spec.safe_usage:
         func = rule.get("func", "")
         if cs.callee == func or (cs.callee and cs.callee.endswith("." + _last(func)) and _last(cs.callee) == _last(func)):
-            value = cs.kwargs.get(rule.get("kwarg", ""))
+            kwarg = rule.get("kwarg", "")
+            safe_values = rule.get("safe_values", [])
+            value = cs.kwargs.get(kwarg)
             if value is None:
-                return False, None
-            if value in rule.get("safe_values", []) or _last(value) in rule.get("safe_values", []):
+                return False, None  # kwarg absent: the library default applies (unsafe for these rules)
+            resolved = cs.kwargs_resolved.get(kwarg)
+            if _matches_safe(resolved, safe_values) or _matches_safe(value, safe_values):
                 return True, None
-            if "." in value or value[:1].isupper():
-                return False, None  # explicit unsafe loader such as yaml.FullLoader
-            return False, f"{rule['kwarg']} comes from variable '{value}' at {cs.file}:{cs.line}; verify it is a safe value"
+            if resolved and resolved in app.functions and app.functions[resolved].is_class:
+                verdict = _class_is_safe(app, resolved, safe_values)
+                if verdict is True:
+                    return True, None
+                if verdict is False:
+                    return False, None
+                return False, f"{kwarg}={value} is an app class whose bases could not be resolved ({cs.file}:{cs.line}); verify it derives from a safe loader"
+            if resolved or "." in value or value[:1].isupper():
+                return False, None  # explicit unsafe value such as yaml.FullLoader
+            return False, f"{kwarg} comes from variable '{value}' at {cs.file}:{cs.line}; verify it is a safe value"
     return None, None
+
+
+def _order_reasons(reasons: list[Reason]) -> list[Reason]:
+    """Most specific first, capped so the report stays readable."""
+    ordered = sorted(reasons, key=lambda r: (REASON_RANK.get(r.kind, 8), r.file or "", r.line or 0))
+    return ordered[:MAX_REASONS]
 
 
 def _chain(app: AppModel, cs: CallSite, target: str, max_depth: int = 10) -> tuple[list[CallStep], str]:
@@ -74,6 +118,8 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
     import_hits = app.imports_any(dep.import_names)
     imported = bool(import_hits)
     reasons: list[Reason] = []
+    # Transitive bridges (requests -> urllib3): the exposure set may carry symbols of another package.
+    match_import_names = list(dep.import_names) + sorted(getattr(exposure, "import_names", set()))
 
     # Transitive: some package the app imports requires this one.
     via = []
@@ -88,20 +134,44 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                        entry_kind="runtime", runtime=trace, reasons=[])
 
     # 2. Static path
-    hits = [cs for cs in app.calls if _is_hit(cs, targets, last_names, dep.import_names)]
+    hits = [cs for cs in app.calls if _is_hit(cs, targets, last_names, match_import_names)]
+    # `from yaml import *` then a bare `load(fh)`: the name is unbound in the app, so it can only
+    # have come from the star import. Treat it as a hit (over-approximation in the safe direction).
+    star_mods = [mod for mod, _f, _l in app.star_imports if mod.split(".")[0] in dep.import_names]
+    if star_mods:
+        for cs in app.calls:
+            if cs.callee is None and cs.receiver is None and cs.last_name in last_names and cs.last_name != "<call>":
+                hits.append(replace(cs, callee=f"{star_mods[0]}.{cs.last_name}"))
     unsafe_hits, safe_notes = [], []
     for cs in hits:
-        safe, note = _safe_usage(cs, spec)
+        safe, note = _safe_usage(cs, spec, app)
         if safe is True:
             continue
         unsafe_hits.append(cs)
         if note:
             safe_notes.append(Reason("safe_arg_variable", cs.file, cs.line, cs.code, note))
     if unsafe_hits:
-        cs = unsafe_hits[0]
-        path, entry_kind = _chain(app, cs, cs.callee or cs.last_name)
+        # Show the call site whose chain reaches the best entry point; list the rest as also_called_at.
+        chains = [(_chain(app, cs, cs.callee or cs.last_name), cs) for cs in unsafe_hits]
+        chains.sort(key=lambda item: (ENTRY_RANK.get(item[0][1], 9), len(item[0][0]), item[1].file, item[1].line))
+        (path, entry_kind), best = chains[0]
+        # Continue the chain inside the library down to the vulnerable function, when we analysed its source.
+        lib_chain = exposure.chain_for(best.callee or best.last_name) if hasattr(exposure, "chain_for") else []
+        if len(lib_chain) > 1:
+            path = path[:-1] + [CallStep(q, "", 0, "") for q in lib_chain]
+        listed = {(best.file, best.line)}
+        others = []
+        for (_p, _k), cs in chains[1:]:
+            if (cs.file, cs.line) not in listed and len(others) < 5:
+                listed.add((cs.file, cs.line))
+                others.append(Reason("also_called_at", cs.file, cs.line, cs.code, ""))
         conf = spec.confidence or 0.5
-        return Finding(adv, dep, spec, REACHABLE, round(conf, 2), path=path, entry_kind=entry_kind, reasons=safe_notes,
+        if not imported and via:
+            safe_notes.append(Reason("transitive", None, None,
+                                     f"{dep.name} is reached through {', '.join(via)}, which the app imports", ""))
+            conf *= 0.9
+        return Finding(adv, dep, spec, REACHABLE, round(conf, 2), path=path, entry_kind=entry_kind,
+                       reasons=_order_reasons(safe_notes + others),
                        checklist={"call_sites": len(unsafe_hits), "safe_call_sites": len(hits) - len(unsafe_hits)})
 
     # 3. Uncertainty sources
@@ -111,8 +181,12 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                                   f"receiver of .{cs.last_name}() could not be resolved; confirm it is not a {dep.name} object"))
     for m in app.dynamic:
         reasons.append(Reason("dynamic", m.file, m.line, m.detail, f"{m.kind} can reach any symbol; confirm it never targets {dep.name}"))
+    seen_strings = set()
     for s in app.strings:
         if s.value in targets or s.value in last_names or any(s.value.endswith("." + t) for t in last_names) or s.value in dep.import_names:
+            if (s.file, s.value) in seen_strings:
+                continue
+            seen_strings.add((s.file, s.value))
             reasons.append(Reason("string_ref", s.file, s.line, s.value, "a string names the vulnerable symbol; check how it is used (template filter, getattr, config)"))
     for mod, f, line in app.star_imports:
         if mod.split(".")[0] in dep.import_names:
@@ -143,7 +217,8 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                        reasons=[Reason("not_imported", None, None, f"no module in {dep.import_names} is imported by the app", "")], checklist=checklist)
 
     if blocking:
-        return Finding(adv, dep, spec, UNCERTAIN, round(min(spec.confidence or 0.5, 0.6), 2), reasons=reasons, checklist=checklist)
+        return Finding(adv, dep, spec, UNCERTAIN, round(min(spec.confidence or 0.5, 0.6), 2),
+                       reasons=_order_reasons(reasons), checklist=checklist)
 
     # 5. Imported, no path, checklist clean
     seen_calls = sorted({f"{cs.callee} ({cs.file}:{cs.line})" for cs in app.calls if cs.callee and cs.callee.split('.')[0] in dep.import_names})[:6]
