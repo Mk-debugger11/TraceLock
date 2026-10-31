@@ -15,12 +15,25 @@ from __future__ import annotations
 import json
 import sys
 import uuid
+from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TextIO
 from urllib.parse import quote
 
-from .models import NOT_REACHABLE, REACHABLE, UNCERTAIN, CallStep, Finding, ScanResult, to_dict
+from .models import (
+    NOT_REACHABLE,
+    REACHABLE,
+    UNCERTAIN,
+    Advisory,
+    CallStep,
+    Dependency,
+    Finding,
+    Reason,
+    ScanResult,
+    VulnSpec,
+    to_dict,
+)
 
 ORDER = {REACHABLE: 0, UNCERTAIN: 1, NOT_REACHABLE: 2}
 VERDICT_STYLE = {NOT_REACHABLE: "bold green", REACHABLE: "bold red", UNCERTAIN: "bold yellow"}
@@ -94,6 +107,31 @@ def print_terminal(result: ScanResult, file: Optional[TextIO] = None) -> None:
 
 def to_json(result: ScanResult, indent: int = 2) -> str:
     return json.dumps(to_dict(result), indent=indent)
+
+
+def _build(cls, data: dict):
+    """Instantiate a models dataclass from a dict, ignoring keys it does not know."""
+    names = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in names})
+
+
+def from_dict(data: dict) -> ScanResult:
+    """Inverse of models.to_dict: rebuild a ScanResult from stored JSON (the advisory's raw record stays empty)."""
+    findings = []
+    for f in data.get("findings", []):
+        findings.append(_build(Finding, {
+            **f,
+            "advisory": _build(Advisory, f["advisory"]),
+            "dependency": _build(Dependency, f["dependency"]),
+            "spec": _build(VulnSpec, f["spec"]),
+            "path": [_build(CallStep, s) for s in f.get("path", [])],
+            "reasons": [_build(Reason, r) for r in f.get("reasons", [])],
+        }))
+    return _build(ScanResult, {
+        **data,
+        "dependencies": [_build(Dependency, d) for d in data.get("dependencies", [])],
+        "findings": findings,
+    })
 
 
 def _purl(f: Finding) -> str:

@@ -63,6 +63,14 @@ def test_sarif_omits_not_reachable_and_warns_on_uncertain(results):
     assert uncertain["locations"][0]["physicalLocation"]["region"]["startLine"] == 6
 
 
+def test_from_dict_round_trips(results):
+    for result in results.values():
+        data = report.to_dict(result)
+        rebuilt = report.from_dict(json.loads(json.dumps(data)))
+        assert report.to_dict(rebuilt) == data
+        assert report.render_terminal(rebuilt) == report.render_terminal(result)
+
+
 def test_print_terminal_falls_back_to_plain_text(results, monkeypatch):
     monkeypatch.setitem(sys.modules, "rich", None)  # makes `import rich.console` raise ImportError
     monkeypatch.setitem(sys.modules, "rich.console", None)

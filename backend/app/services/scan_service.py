@@ -4,10 +4,13 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.scan import (
+    STAGE_ANALYSIS,
+    STAGE_ANALYZED,
     STAGE_QUEUED,
     STAGE_REPOSITORY_FETCH,
     STAGE_REPOSITORY_FETCHED,
     SOURCE_GITHUB,
+    STATUS_DONE,
     STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_READY_FOR_ANALYSIS,
@@ -67,6 +70,21 @@ def mark_scan_fetched(db: Session, scan: Scan, metadata: dict) -> None:
     scan.repository_metadata = metadata
     scan.status = STATUS_READY_FOR_ANALYSIS
     scan.stage = STAGE_REPOSITORY_FETCHED
+    scan.progress = 50
+    db.commit()
+
+
+def mark_scan_analyzing(db: Session, scan: Scan) -> None:
+    scan.status = STATUS_RUNNING
+    scan.stage = STAGE_ANALYSIS
+    scan.progress = 60
+    db.commit()
+
+
+def mark_scan_done(db: Session, scan: Scan, result: dict) -> None:
+    scan.result = result
+    scan.status = STATUS_DONE
+    scan.stage = STAGE_ANALYZED
     scan.progress = 100
     db.commit()
 

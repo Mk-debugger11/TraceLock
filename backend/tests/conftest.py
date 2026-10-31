@@ -12,6 +12,14 @@ from app.main import app
 from app.models import scan  # noqa: F401  (registers the Scan table)
 
 
+@pytest.fixture(autouse=True)
+def offline_engine(tmp_path, monkeypatch):
+    """The engine never touches the network in tests and unpacks sources into tmp, not the cwd."""
+    monkeypatch.setattr("app.worker.ANALYSIS_OFFLINE", True)
+    monkeypatch.setattr("tracelock.pypi_source.CACHE_SRC", tmp_path / "tl-cache" / "src")
+    monkeypatch.setattr("tracelock.pypi_source.CACHE_DL", tmp_path / "tl-cache" / "dl")
+
+
 @pytest.fixture()
 def workspace(tmp_path, monkeypatch):
     """Point the API and worker at a temporary workspace instead of the real one."""
