@@ -307,7 +307,7 @@ def scan_dependencies(root: Path) -> list[Dependency]:
 
     locks: list[Dependency] = []
     for lock_name in LOCK_FILES:
-        for path in _walk(root, lock_name):
+        for path in _manifests(root, lock_name):
             if lock_name == "poetry.lock":
                 locks.extend(_parse_poetry_lock(path, root))
             elif lock_name == "uv.lock":
@@ -317,7 +317,7 @@ def scan_dependencies(root: Path) -> list[Dependency]:
     layers.append(locks)
     layers.append(_parse_venv(root))
     reqs: list[Dependency] = []
-    for path in _walk(root, "requirements*.txt"):
+    for path in _manifests(root, "requirements*.txt"):
         reqs.extend(_parse_requirements(path, root, unpinned))
     layers.append(reqs)
     pyproject = root / "pyproject.toml"
@@ -333,5 +333,21 @@ def scan_dependencies(root: Path) -> list[Dependency]:
             dep.requires = _known_requires(dep)
     for name, message in unpinned.items():
         if name not in found:
-            WARNINGS.append(message + "; skipped, its advisories are not checked")
+            # Keep the package with an unknown version: every advisory for it is reported, and the
+            # verdict engine marks those UNCERTAIN (or NOT_REACHABLE when it is never imported).
+            found[name] = Dependency(name=name, version="", import_names=import_names_for(name), source="unpinned")
+            WARNINGS.append(message + "; version unknown, so all of its advisories are checked and reported as uncertain")
     return list(found.values())
+
+
+def _manifests(root: Path, pattern: str):
+    """Manifests to read. Root-level ones win: a monorepo's nested requirements (sub-projects,
+    fixtures, examples) are ignored when the root has its own, and named in WARNINGS."""
+    paths = list(_walk(root, pattern))
+    top = [p for p in paths if p.parent == root]
+    if top and len(paths) > len(top):
+        nested = [str(p.relative_to(root)) for p in paths if p.parent != root]
+        WARNINGS.append(f"{pattern}: using the root manifest(s) only; nested ones ignored: {', '.join(nested[:6])}"
+                        + (" ..." if len(nested) > 6 else ""))
+        return top
+    return paths

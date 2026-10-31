@@ -206,7 +206,7 @@ def _load_snapshot() -> dict:
 
 
 def _cache_path(dep: Dependency) -> Path:
-    return CACHE_DIR / f"{dep.name}-{dep.version}.json"
+    return CACHE_DIR / f"{dep.name}-{dep.version or 'unpinned'}.json"
 
 
 def _urlopen_json(req, timeout: int) -> dict:
@@ -229,7 +229,8 @@ def _fetch_full(vuln_id: str) -> dict:
 
 def _query_live(deps: list[Dependency]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {d.name: [] for d in deps}
-    queries = [{"package": {"name": d.name, "ecosystem": "PyPI"}, "version": d.version} for d in deps]
+    queries = [({"package": {"name": d.name, "ecosystem": "PyPI"}, "version": d.version} if d.version
+                else {"package": {"name": d.name, "ecosystem": "PyPI"}}) for d in deps]
     pending = list(range(len(deps)))
     tokens: dict[int, str] = {}
     while pending:  # follow next_page_token per query until every query is exhausted
@@ -291,6 +292,6 @@ def lookup(deps: list[Dependency], offline: bool = False) -> dict[str, list[Advi
                 print(f"tracelock: no offline OSV data for {dep.name}=={dep.version}; it is not checked",
                       file=sys.stderr)
             records = [r for r in snapshot.get(dep.name, [])
-                       if not r.get("withdrawn") and version_affected(r, dep.name, dep.version)]
+                       if not r.get("withdrawn") and (not dep.version or version_affected(r, dep.name, dep.version))]
             result[dep.name] = merge_aliases(records, dep.name, dep.version)
     return result

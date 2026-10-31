@@ -100,6 +100,8 @@ class AppModel:
     star_imports: list = field(default_factory=list)       # (module imported from, file, line)
     imported_top_levels: dict = field(default_factory=dict)  # top-level module -> [(file, line)]
     returns: dict = field(default_factory=dict)            # function qualname -> dotted name its last `return` evaluates to
+    module_scopes: dict = field(default_factory=dict)      # module name -> its module-level bindings (imports, defs, classes)
+    class_attrs: dict = field(default_factory=dict)        # class qualname -> {attr: dotted name assigned via self.attr = ...}
     references: list = field(default_factory=list)         # list[Reference]
     exports: dict = field(default_factory=dict)            # app module -> {top-level name: dotted name it is bound to}
     attributes: dict = field(default_factory=dict)         # app class -> {attribute: set of dotted values (or UNKNOWN)}
@@ -150,6 +152,7 @@ class _ModuleAnalyzer:
     def __init__(self, model: AppModel, module: str, rel_file: str, source: str, collect_tables: bool = False):
         self.model, self.module, self.file = model, module, rel_file
         self.lines = source.splitlines()
+        self.is_package = rel_file.endswith("__init__.py")
         self.collect_tables = collect_tables   # pass 1 fills model.exports / model.attributes; pass 2 reads them
 
     # --- helpers -------------------------------------------------------------
@@ -242,6 +245,7 @@ class _ModuleAnalyzer:
         self.model.functions[module_fn] = FunctionInfo(module_fn, self.file, 1, len(self.lines),
                                                        entry_kind="main" if has_main_block else "module")
         self.visit_block(tree.body, scope, self.module, module_fn, class_qual=None)
+        self.model.module_scopes[self.module] = dict(scope)
         if self.collect_tables:  # what `from <this module> import name` gives other app modules
             self.model.exports[self.module] = {k: v for k, v in scope.items()
                                                if not k.startswith("self.") and v != f"{self.module}.{k}"}
@@ -259,9 +263,11 @@ class _ModuleAnalyzer:
             return
         if isinstance(node, ast.ImportFrom):
             mod = node.module or ""
-            if node.level:  # relative import: resolve against the current module path
+            if node.level:  # relative import: resolve against the current package
                 base_parts = self.module.split(".")
-                base_parts = base_parts[: max(len(base_parts) - node.level, 0)]
+                # inside pkg/__init__.py one dot means the package itself; inside pkg/mod.py it means pkg
+                keep = len(base_parts) - node.level + (1 if self.is_package else 0)
+                base_parts = base_parts[: max(keep, 0)]
                 mod = ".".join(p for p in [*base_parts, mod] if p)
             else:
                 self.add_import_hit(mod.split(".")[0], node.lineno)
@@ -316,6 +322,7 @@ class _ModuleAnalyzer:
                 elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self" and class_qual:
                     if resolved:
                         scope[f"self.{t.attr}"] = resolved
+                        self.model.class_attrs.setdefault(class_qual, {}).setdefault(t.attr, resolved)
                     self.note_attribute(class_qual, t.attr, resolved, value, scope)  # visible to every method of the class
         # Generic: scan every expression in this statement for calls, markers and strings,
         # then recurse into nested statement bodies with the same scope.
@@ -476,6 +483,47 @@ class _ModuleAnalyzer:
                                          kwargs_resolved=kwargs_resolved))
 
 
+def canonical(model: AppModel, name: Optional[str], max_hops: int = 6) -> Optional[str]:
+    """Follow app-side aliases: `from app.utils import ld` -> app.utils.ld -> (utils' own binding) -> yaml.load,
+    and instance attributes: app.Cls.parser.load -> (self.parser = YamlParser()) -> app.YamlParser.load."""
+    if not name:
+        return name
+    for _ in range(max_hops):
+        if name in model.functions:
+            return name
+        parts = name.split(".")
+        replaced = None
+        for i in range(len(parts) - 1, 0, -1):
+            prefix, rest = ".".join(parts[:i]), parts[i:]
+            scope = model.module_scopes.get(prefix)
+            if scope is not None and rest[0] in scope:
+                target = scope[rest[0]]
+                if target != prefix + "." + rest[0]:
+                    replaced = ".".join([target, *rest[1:]])
+                    break
+                continue
+            attrs = model.class_attrs.get(prefix)
+            if attrs is not None and rest[0] in attrs:
+                replaced = ".".join([attrs[rest[0]], *rest[1:]])
+                break
+        if not replaced or replaced == name:
+            return name
+        name = replaced
+    return name
+
+
+def _resolve_cross_module(model: AppModel) -> None:
+    """Post-pass: canonicalise every dotted name the analyzer recorded (callees, receivers, kwargs, bases, returns)."""
+    for cs in model.calls:
+        cs.callee = canonical(model, cs.callee)
+        cs.receiver = canonical(model, cs.receiver)
+        cs.kwargs_resolved = {k: canonical(model, v) for k, v in cs.kwargs_resolved.items()}
+    for info in model.functions.values():
+        if info.bases:
+            info.bases = [canonical(model, b) or b for b in info.bases]
+    model.returns = {k: canonical(model, v) or v for k, v in model.returns.items()}
+
+
 def _resolve_inherited(model: AppModel) -> None:
     """Post-pass: `self.m()` / `obj.m()` where m lives on a base class, or on an external base."""
     for cs in model.calls:
@@ -583,7 +631,9 @@ def build(root: Path) -> AppModel:
     # Pass 2: the real model, now able to type `x = make_thing()`, follow re-exports and `self.attr` values.
     for module, rel, source, tree in parsed:
         _ModuleAnalyzer(model, module, rel, source).analyze(tree)
+    _resolve_cross_module(model)
     _resolve_inherited(model)
+    _resolve_cross_module(model)   # inherited rewrites can expose new aliases (and vice versa)
     _mark_phantoms(model)
     model.canonical_cache.clear()
     return model

@@ -161,6 +161,7 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                 return Finding(adv, dep, spec, REACHABLE, 1.0, path=stack, entry_kind="runtime",
                                runtime={"executed": True, "function": fn, "command": trace.get("command", "")}, reasons=[])
 
+    unpinned = not dep.version
     # 2. Static path
     hits = [cs for cs in app.calls if _is_hit(cs, targets, last_names, match_import_names)]
     # `from yaml import *` then a bare `load(fh)`: the name is unbound in the app, so it can only
@@ -170,6 +171,19 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         for cs in app.calls:
             if cs.callee is None and cs.receiver is None and cs.last_name in last_names and cs.last_name != "<call>":
                 hits.append(replace(cs, callee=f"{star_mods[0]}.{cs.last_name}"))
+    # Non-call patterns: a vulnerable class passed as a value (Loader=yaml.FullLoader on any call),
+    # or subclassed (class MyLoader(yaml.FullLoader)). Only class-like targets (Capitalised) qualify.
+    class_targets = {t for t in targets if _last(t)[:1].isupper()}
+    class_lasts = {_last(t) for t in class_targets}
+    def _is_class_ref(v: Optional[str]) -> bool:
+        return bool(v) and (v in class_targets or (v.split(".")[0] in match_import_names and _last(v) in class_lasts))
+    value_hits: list[CallSite] = []
+    if class_targets:
+        for cs in app.calls:
+            if any(_is_class_ref(v) for v in cs.kwargs_resolved.values()) and cs not in hits:
+                value_hits.append(cs)
+    subclass_hits = [(info, b) for info in app.functions.values() if info.is_class for b in info.bases if _is_class_ref(b)] if class_targets else []
+
     # A vulnerable function used as a value (`map(yaml.load, xs)`, `partial`, `key=`, a registry, a class
     # attribute, a default argument) can be called by whoever receives it: count it as a call with default
     # arguments, so it goes through the same safe-usage rules (werkzeug's run_simple default is safe, yaml.load's is not).
@@ -188,6 +202,18 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         unsafe_hits.append(cs)
         if note:
             safe_notes.append(Reason("safe_arg_variable", cs.file, cs.line, cs.code, note))
+    for cs in value_hits:
+        safe, _note = _safe_usage(cs, spec, app)
+        if safe is not True:
+            unsafe_hits.append(cs)
+            safe_notes.append(Reason("value_ref", cs.file, cs.line, cs.code, "a vulnerable class is passed as an argument here"))
+    if not unsafe_hits and subclass_hits:
+        info, base = subclass_hits[0]
+        path = [CallStep(info.qualname, info.file, info.line, f"class {_last(info.qualname)}({base})"), CallStep(base, "", 0, "")]
+        return Finding(adv, dep, spec, REACHABLE, round((spec.confidence or 0.5) * 0.9, 2), path=path, entry_kind="class definition",
+                       reasons=[Reason("subclass", info.file, info.line, f"class {_last(info.qualname)} derives from {base}",
+                                       "instances of this class carry the vulnerable behaviour; check where it is instantiated")],
+                       checklist={"call_sites": 0, "subclasses": len(subclass_hits)})
     # Explain references only for symbols no real call already shows, and only a few, so they never crowd out other evidence.
     called = {cs.callee for cs in unsafe_hits if id(cs) not in ref_ids}
     for cs in [cs for cs in unsafe_hits if id(cs) in ref_ids and cs.callee not in called][:3]:
@@ -216,6 +242,10 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
             safe_notes.append(Reason("transitive", None, None,
                                      f"{dep.name} is reached through {', '.join(via)}, which the app imports", ""))
             conf *= 0.9
+        if unpinned:
+            safe_notes.append(Reason("version_unpinned", None, None, f"{dep.name} has no pinned version",
+                                     f"pin {dep.name} and rescan; the installed version may already be at or past {adv.fixed_in or 'the fix'}"))
+            conf *= 0.7
         return Finding(adv, dep, spec, REACHABLE, round(conf, 2), path=path, entry_kind=entry_kind,
                        reasons=_order_reasons(safe_notes + others),
                        checklist={"call_sites": len(unsafe_hits), "safe_call_sites": len(hits) - len(unsafe_hits)})
@@ -241,6 +271,9 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
     for mod, f, line in app.star_imports:
         if mod.split(".")[0] in dep.import_names:
             reasons.append(Reason("star_import", f, line, f"from {mod} import *", "star import hides which names are used; replace with explicit imports"))
+    if unpinned and imported:
+        reasons.append(Reason("version_unpinned", None, None, f"{dep.name} has no pinned version, so this advisory may not apply",
+                              f"pin {dep.name} to an exact version and rescan"))
     if spec.tier == TIER_NONE:
         reasons.append(Reason("no_function_data", None, None, f"{adv.id} names no vulnerable function and has no usable fix commit",
                               "read the advisory and fix manually; treat as affected until then"))
@@ -264,7 +297,7 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         "function_data_available": spec.tier != TIER_NONE,
         "not_transitively_required": not via,
     }
-    blocking = [r for r in reasons if r.kind in {"unresolved_call", "dynamic", "string_ref", "star_import", "no_function_data", "transitive"}]
+    blocking = [r for r in reasons if r.kind in {"unresolved_call", "dynamic", "string_ref", "star_import", "no_function_data", "transitive", "version_unpinned"}]
 
     # 4. Not imported at all (and nothing dynamic that could import it)
     if not imported and not blocking:
