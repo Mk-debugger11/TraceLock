@@ -163,8 +163,9 @@ class ExposureSet(set):
         super().__init__(names)
         self.chains: dict[str, list[str]] = chains or {}
         self.import_names: set[str] = set()   # extra top-level modules the names belong to (transitive bridges)
+        self.bridged: set[str] = set()        # package names whose bridge analysis was performed
 
-    def merge_bridge(self, bridge: "ExposureSet", bridge_import_names: list[str]) -> None:
+    def merge_bridge(self, bridge: "ExposureSet", bridge_import_names: list[str], package: str = "") -> None:
         """Add a bridging package's exposure (e.g. requests functions that call urllib3's entry API),
         stitching each bridge chain onto the inner chain of the symbol it lands on."""
         for name in bridge:
@@ -175,6 +176,8 @@ class ExposureSet(set):
             self.chains[name] = chain
             self.add(name)
         self.import_names.update(bridge_import_names)
+        if package:
+            self.bridged.add(package)
 
     def chain_for(self, symbol: str) -> list[str]:
         """Chain for an app-side callee such as 'requests.Session.get' (matched exactly, else by trailing segments)."""

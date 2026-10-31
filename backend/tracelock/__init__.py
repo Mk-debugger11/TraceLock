@@ -98,7 +98,7 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
                 except Exception as exc:
                     result.warnings.append(f"{other.name}: bridge analysis failed ({exc})")
                     continue
-                exposure.merge_bridge(bridge, other.import_names)
+                exposure.merge_bridge(bridge, other.import_names, package=other.name)
             finding = verdict.decide(app, dep, adv, spec, exposure, trace=trace, all_deps=dependencies)
             result.findings.append(finding)
 
