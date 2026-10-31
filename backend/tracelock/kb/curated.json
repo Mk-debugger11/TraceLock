@@ -1,0 +1,41 @@
+{
+  "_comment": "Curated knowledge base. Key = any advisory id or alias. Vaibhav: verify every entry against its fix commit on GitHub, then add the rest of the seed list from docs/briefs/BRIEF_VAIBHAV.md. Dotted names must match how app code refers to the symbol (import name, not distribution name).",
+  "CVE-2020-14343": {
+    "package": "pyyaml",
+    "vulnerable_funcs": [
+      "yaml.constructor.FullConstructor.construct_python_object_apply",
+      "yaml.constructor.FullConstructor.construct_python_object_new",
+      "yaml.constructor.FullConstructor.find_python_name"
+    ],
+    "entry_api": [
+      "yaml.load", "yaml.load_all", "yaml.full_load", "yaml.full_load_all",
+      "yaml.unsafe_load", "yaml.unsafe_load_all",
+      "yaml.FullLoader", "yaml.UnsafeLoader", "yaml.Loader"
+    ],
+    "safe_usage": [
+      {"func": "yaml.load", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]},
+      {"func": "yaml.load_all", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]}
+    ],
+    "fix_commit": "https://github.com/yaml/pyyaml/commit/a001f2782501ad2d24986e6cd05b5e2ba3f5d32e",
+    "confidence": 0.95,
+    "notes": "full_load / FullLoader executes arbitrary code via python/object/new. yaml.load without a Loader defaults to FullLoader in 5.1-5.3. safe_load is never affected. VERIFY fix commit sha."
+  },
+  "CVE-2020-1747": {
+    "package": "pyyaml",
+    "vulnerable_funcs": [
+      "yaml.constructor.FullConstructor.construct_python_object_apply",
+      "yaml.constructor.FullConstructor.find_python_name"
+    ],
+    "entry_api": [
+      "yaml.load", "yaml.load_all", "yaml.full_load", "yaml.full_load_all",
+      "yaml.FullLoader"
+    ],
+    "safe_usage": [
+      {"func": "yaml.load", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]},
+      {"func": "yaml.load_all", "kwarg": "Loader", "safe_values": ["yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader", "SafeLoader", "CSafeLoader", "BaseLoader"]}
+    ],
+    "fix_commit": null,
+    "confidence": 0.9,
+    "notes": "Same family as CVE-2020-14343 (incomplete fix in 5.3.1). VERIFY and add fix commit from PR yaml/pyyaml#386."
+  }
+}
