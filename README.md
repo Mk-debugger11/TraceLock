@@ -22,12 +22,52 @@ REACHABLE     GHSA-8q59-q68h-6hv4  pyyaml 5.3 -> fixed 5.4    confidence 0.95
 
 ---
 
+## Install & use
+
+```bash
+pip install ./backend                                  # from a checkout; installs the `tracelock` command
+tracelock scan <project>                               # terminal report (default); static, never executes the project
+tracelock scan <project> --explain                     # adds a plain-language "why" paragraph under every finding
+tracelock scan <project> --json out.json --vex out.vex.json --sarif out.sarif   # machine-readable outputs
+tracelock trace <project> -- python app.py             # runtime confirmation: this one EXECUTES your app
+```
+
+The terminal report always prints (unless `--quiet`); `--json`, `--vex` (OpenVEX) and `--sarif` each
+write a file and can be combined in one run. Add `--offline` to stay off the network (bundled OSV
+snapshot and dependency wheels).
+
+**Accepting a finding.** A `.tracelock.yml` at the project root records triage decisions:
+
+```yaml
+accept:
+  - id: CVE-2023-32681                 # advisory id or any alias
+    reason: "no proxies are configured; Proxy-Authorization is never set"
+    by: mukul
+    until: 2026-12-31                  # after this date the finding counts again (and a warning says so)
+    justification: vulnerable_code_cannot_be_controlled_by_adversary   # OpenVEX justification, optional
+ignore_paths: ["tests/"]
+```
+
+An accepted finding keeps its real verdict in the report, is marked `[ACCEPTED]` with who accepted it and
+until when, is left out of the exit code, and is written to OpenVEX as `not_affected` with the reason as
+the `impact_statement`. Nothing is hidden, and every acceptance has an owner and an expiry.
+
+**CI.** [`.github/workflows/tracelock.yml`](.github/workflows/tracelock.yml) runs the tests and the
+benchmark on every push and pull request, scans the demo app, and uploads the SARIF to GitHub code
+scanning, so findings appear in the repository's **Security → Code scanning** tab with the call path as a
+code flow.
+
+More: [docs/INTEGRATION.md](docs/INTEGRATION.md) (config reference, CI, pre-commit, Docker, feeding
+OpenVEX/SARIF to other tools) and [docs/ENGINE.md](docs/ENGINE.md) (how the engine decides).
+
+---
+
 ## Quick start
 
-### CLI
+### CLI from a checkout
 
-The engine (`backend/tracelock/`) needs only Python 3.11+ and its standard library (`packaging` and
-`rich` are used when present).
+The engine (`backend/tracelock/`) needs only Python 3.10+ and its standard library (`packaging` and
+`rich` are used when present). Without installing, run it as a module:
 
 ```bash
 cd backend
@@ -49,6 +89,7 @@ python -m tracelock.cli trace ../benchmark/pyyaml_direct --offline -- python -m 
 | `--json FILE` / `--vex FILE` / `--sarif FILE` | write the full result, an OpenVEX document, a SARIF 2.1.0 log |
 | `--no-sources` (`scan`) | skip fetching dependency source; curated knowledge base only |
 | `--fail-on reachable\|uncertain` | which verdicts make the exit code 1 (default `reachable`) |
+| `--explain` | a plain-language "why" paragraph under every finding |
 | `--timeout S` (`trace`) | kill the traced command after S seconds (default 60) |
 | `--quiet` | no terminal report |
 
@@ -193,12 +234,16 @@ you trust; static analysis never executes anything.
 
 - Reachable means the code can call the vulnerable function, not that attacker-controlled input
   reaches it. There is no taint analysis.
-- Dispatch tables, C extensions, plugins loaded by name and monkey-patching produce UNCERTAIN, not
-  NOT_REACHABLE.
-- Call resolution is name-based with light typing (imports, constructors, `self`, annotations, one
-  level of return types, class bases). Receivers it cannot type are reported as unresolved and block a
-  "safe" verdict instead of being guessed.
-- Unpinned dependency specifiers are skipped with a warning; pin your versions or scan from a venv.
+- A vulnerable function passed around as a value (callbacks, `functools.partial`, `key=`, dispatch
+  dicts, registries, class attributes, default arguments) counts as called. C extensions, plugins loaded
+  by name and monkey-patching produce UNCERTAIN, not NOT_REACHABLE.
+- Call resolution is name-based with light typing (imports, re-exports, constructors, `self` attributes,
+  annotations, one level of return types, class bases). Receivers it cannot type, such as an untyped
+  function parameter, are reported as unresolved and block a "safe" verdict instead of being guessed.
+- An unpinned dependency is kept with an unknown version: all of its advisories are checked, and any
+  that the app could use come out UNCERTAIN. Pin your versions or scan from a venv for exact answers.
+- When the project root has its own `requirements*.txt`, nested ones (sub-projects, labs, examples) are
+  ignored with a warning; scan each sub-project's folder to check it.
 
 ---
 
@@ -220,6 +265,7 @@ and tier, the verdict, confidence, `path` (`qualname`, `file`, `line`, `code` pe
 | REACHABLE | `affected` | `action_statement`: the symbol called, the call site, and the upgrade |
 | NOT_REACHABLE | `not_affected` | `justification: vulnerable_code_not_in_execute_path`, `impact_statement`: the checklist summary |
 | UNCERTAIN | `under_investigation` | `action_statement`: the first reason's check |
+| accepted in `.tracelock.yml` | `not_affected` | your `justification` (default `inline_mitigations_already_exist`), `impact_statement`: who, until when, why, and the real verdict |
 
 **SARIF 2.1.0** (`--sarif`, `GET /result.sarif`) — tool `TraceLock`, one rule per advisory id (summary,
 details, fix link). One result per REACHABLE finding (level `error`) at the call site, with the call path
@@ -232,32 +278,30 @@ Both formats were validated against the official OpenVEX and SARIF JSON schemas.
 
 ## Benchmark
 
-`python benchmark/run.py` on the merged `main`:
+`python benchmark/run.py` on `main` (38 fixture apps, 65 labelled advisory rows):
 
-| fixture | advisory | expected | got | result |
-| --- | --- | --- | --- | --- |
-| getattr_dynamic | CVE-2020-14343 | UNCERTAIN | UNCERTAIN | ok |
-| getattr_dynamic | CVE-2020-1747 | UNCERTAIN | UNCERTAIN | ok |
-| not_imported | CVE-2020-14343 | NOT_REACHABLE | NOT_REACHABLE | ok |
-| not_imported | CVE-2020-1747 | NOT_REACHABLE | NOT_REACHABLE | ok |
-| pyyaml_direct | CVE-2020-14343 | REACHABLE | REACHABLE | ok |
-| pyyaml_direct | CVE-2020-1747 | REACHABLE | REACHABLE | ok |
-| pyyaml_safe_load | CVE-2020-14343 | NOT_REACHABLE | NOT_REACHABLE | ok |
-| pyyaml_safe_load | CVE-2020-1747 | NOT_REACHABLE | NOT_REACHABLE | ok |
-| pyyaml_safeloader_kwarg | CVE-2020-14343 | NOT_REACHABLE | NOT_REACHABLE | ok |
-| pyyaml_safeloader_kwarg | CVE-2020-1747 | NOT_REACHABLE | NOT_REACHABLE | ok |
-| three_hop_chain | CVE-2020-14343 | REACHABLE | REACHABLE | ok |
-| three_hop_chain | CVE-2020-1747 | REACHABLE | REACHABLE | ok |
+**65/65 correct, 0 wrong, 0 FALSE SAFE.**
 
-**12/12 correct, 0 wrong, 0 FALSE SAFE.**
+| verdict | precision | recall | rows |
+| --- | --- | --- | --- |
+| REACHABLE | 1.00 | 1.00 | 40 |
+| NOT_REACHABLE | 1.00 | 1.00 | 20 |
+| UNCERTAIN (expected) | | | 5 of 5 |
 
-See [`benchmark/RESULTS.md`](benchmark/RESULTS.md) for the full benchmark write-up (coming with the
-benchmark PR).
+The fixtures cover direct and multi-hop calls, safe look-alikes (`safe_load`, `Loader=SafeLoader`,
+safe subclasses), functions passed as values, re-exports and `self` attributes, dynamic dispatch,
+string references in templates, transitive dependencies and unpinned versions. Every row is in
+[`benchmark/RESULTS.md`](benchmark/RESULTS.md), which `run.py` regenerates.
 
-`python benchmark/run.py` scans every fixture in `benchmark/` offline and compares against its
-`expected.json`; a false NOT_REACHABLE is counted separately as **FALSE SAFE** and must stay at 0. Five
-of the fixtures pin exactly `pyyaml==5.3`, so `pip-audit` prints the same four advisories for all of
-them, while TraceLock separates them into REACHABLE, NOT_REACHABLE and UNCERTAIN.
+The script scans every fixture offline and compares against its `expected.json`; a wrong NOT_REACHABLE
+is counted separately as **FALSE SAFE** and must stay at 0. Many fixtures pin exactly `pyyaml==5.3`, so
+`pip-audit` prints the same four advisories for all of them, while TraceLock separates them into
+REACHABLE, NOT_REACHABLE and UNCERTAIN.
+
+On `real_flask_app`, a small Flask app with ten pinned packages, a dependency scanner reports **108
+advisories**; TraceLock marks **6 REACHABLE** (each with its call path), **7 NOT_REACHABLE** (with the
+checklist) and **95 UNCERTAIN** (offline, most because the bundled knowledge base does not say which
+functions those advisories affect).
 
 ---
 
@@ -284,10 +328,12 @@ them, while TraceLock separates them into REACHABLE, NOT_REACHABLE and UNCERTAIN
 ```
 backend/tracelock/   the engine and CLI (scan, report formats, PyPI source fetcher, tracer)
 backend/app/         FastAPI API, ingestion (GitHub / zip / local), background worker
-backend/tests/       pytest suite for API, ingestion, worker, PyPI source and report formats
-benchmark/           fixture apps with expected verdicts, and run.py
+backend/tests/       pytest suite for the engine, API, ingestion, worker, PyPI source, config and report formats
+benchmark/           fixture apps with expected verdicts, run.py and RESULTS.md
 frontend/            React + Vite results UI
-docs/                team briefs, pitch slides
+docs/                ENGINE.md, INTEGRATION.md, pitch slides, team briefs
+.github/workflows/   CI: tests, benchmark, demo scan with SARIF upload
+Dockerfile, docker-compose.yml, .pre-commit-hooks.yaml   packaging for CLI, server and pre-commit
 ```
 
 Team T032 (Mukul Kumar, Kartik Madaan, Vaibhav Vats), Problem 03: Python Vulnerability Reachability
