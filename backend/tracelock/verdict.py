@@ -29,10 +29,11 @@ def _is_hit(cs: CallSite, targets: set[str], last_names: set[str], import_names:
 
 ENTRY_RANK = {"main": 0, "route": 1, "module": 2, "test": 3, "runtime": 0, "orphan": 9}
 REASON_RANK = {"unresolved_call": 0, "string_ref": 1, "star_import": 2, "transitive": 3, "dynamic": 4,
-               "no_function_data": 5, "safe_arg_variable": 6, "also_called_at": 7}
+               "no_function_data": 5, "reference": 6, "safe_arg_variable": 6, "also_called_at": 7}
 MAX_REASONS = 8
-# str/bytes/dict/list methods that appear on unresolved receivers everywhere; an unresolved `x.decode()`
-# is far more likely bytes.decode than jwt.decode, so these never create an unresolved_call reason.
+# str/bytes/dict/list methods that appear on unresolved receivers everywhere. In a file that does not import
+# the package (nor a package that requires it), an unresolved `x.decode()` is bytes.decode, not jwt.decode, so
+# there these never create an unresolved_call reason. In a file that imports it, they still do.
 UBIQUITOUS_METHODS = {"decode", "encode", "get", "items", "keys", "values", "update", "pop", "append", "extend",
                       "format", "join", "split", "strip", "lower", "upper", "replace", "read", "write", "close",
                       "copy", "startswith", "endswith", "setdefault", "insert", "remove", "sort", "count", "index"}
@@ -87,6 +88,15 @@ def _safe_usage(cs: CallSite, spec: VulnSpec, app: AppModel) -> tuple[Optional[b
     return None, None
 
 
+def _judged_argument(ref, spec: VulnSpec) -> bool:
+    """`yaml.load(fh, Loader=yaml.SafeLoader)`: the Loader value is the argument a safe-usage rule judges at
+    that call, not a function the app hands out, so on its own it is not a reference hit."""
+    if not ref.arg_of or not ref.kwarg:
+        return False
+    return any(rule.get("kwarg") == ref.kwarg and (ref.arg_of == rule.get("func") or _last(ref.arg_of) == _last(rule.get("func", "")))
+               for rule in spec.safe_usage)
+
+
 def _order_reasons(reasons: list[Reason]) -> list[Reason]:
     """Most specific first, capped so the report stays readable."""
     ordered = sorted(reasons, key=lambda r: (REASON_RANK.get(r.kind, 8), r.file or "", r.line or 0))
@@ -105,6 +115,9 @@ def _chain(app: AppModel, cs: CallSite, target: str, max_depth: int = 10) -> tup
             entry_kind = info.entry_kind
             break
         callers = [c for c in app.callers_of(current) if c.caller not in seen]
+        # a function registered or stored as a callback is reached through whoever passed it on
+        callers += [CallSite(r.caller, r.target, _last(r.target), r.file, r.line, r.code)
+                    for r in app.referrers_of(current) if r.caller not in seen]
         if not callers:
             break
         callers.sort(key=lambda c: (app.functions.get(c.caller) is None or app.functions[c.caller].entry_kind is None, c.file, c.line))
@@ -157,6 +170,16 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         for cs in app.calls:
             if cs.callee is None and cs.receiver is None and cs.last_name in last_names and cs.last_name != "<call>":
                 hits.append(replace(cs, callee=f"{star_mods[0]}.{cs.last_name}"))
+    # A vulnerable function used as a value (`map(yaml.load, xs)`, `partial`, `key=`, a registry, a class
+    # attribute, a default argument) can be called by whoever receives it: count it as a call with default
+    # arguments, so it goes through the same safe-usage rules (werkzeug's run_simple default is safe, yaml.load's is not).
+    ref_hits = []
+    for r in app.references:
+        cs = CallSite(caller=r.caller, callee=r.target, last_name=_last(r.target), file=r.file, line=r.line, code=r.code)
+        if _is_hit(cs, targets, last_names, match_import_names) and not _judged_argument(r, spec):
+            ref_hits.append(cs)
+    hits += ref_hits
+    ref_ids = {id(cs) for cs in ref_hits}
     unsafe_hits, safe_notes = [], []
     for cs in hits:
         safe, note = _safe_usage(cs, spec, app)
@@ -165,10 +188,16 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         unsafe_hits.append(cs)
         if note:
             safe_notes.append(Reason("safe_arg_variable", cs.file, cs.line, cs.code, note))
+    # Explain references only for symbols no real call already shows, and only a few, so they never crowd out other evidence.
+    called = {cs.callee for cs in unsafe_hits if id(cs) not in ref_ids}
+    for cs in [cs for cs in unsafe_hits if id(cs) in ref_ids and cs.callee not in called][:3]:
+        safe_notes.append(Reason("reference", cs.file, cs.line, cs.code,
+                                 f"{cs.callee} is passed or stored as a value here; whoever receives it can call it"))
     if unsafe_hits:
         # Show the call site whose chain reaches the best entry point; list the rest as also_called_at.
         chains = [(_chain(app, cs, cs.callee or cs.last_name), cs) for cs in unsafe_hits]
-        chains.sort(key=lambda item: (ENTRY_RANK.get(item[0][1], 9), len(item[0][0]), item[1].file, item[1].line))
+        # A call we can see is better evidence than a reference we assume is called, at the same entry quality.
+        chains.sort(key=lambda item: (ENTRY_RANK.get(item[0][1], 9), id(item[1]) in ref_ids, len(item[0][0]), item[1].file, item[1].line))
         (path, entry_kind), best = chains[0]
         # Continue the chain inside the library down to the vulnerable function, when we analysed its source.
         lib_chain = exposure.chain_for(best.callee or best.last_name) if hasattr(exposure, "chain_for") else []
@@ -181,6 +210,8 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                 listed.add((cs.file, cs.line))
                 others.append(Reason("also_called_at", cs.file, cs.line, cs.code, ""))
         conf = spec.confidence or 0.5
+        if id(best) in ref_ids:
+            conf *= 0.9  # the best evidence is a reference: we assume, rather than see, the call
         if not imported and via:
             safe_notes.append(Reason("transitive", None, None,
                                      f"{dep.name} is reached through {', '.join(via)}, which the app imports", ""))
@@ -190,8 +221,12 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
                        checklist={"call_sites": len(unsafe_hits), "safe_call_sites": len(hits) - len(unsafe_hits)})
 
     # 3. Uncertainty sources
+    by_name = {d.name: d for d in all_deps or []}
+    package_files = {f for f, _l in import_hits}
+    for name in via:
+        package_files.update(f for f, _l in app.imports_any(by_name[name].import_names))
     for cs in app.calls:
-        if cs.callee is None and cs.last_name in last_names and cs.last_name not in UBIQUITOUS_METHODS:
+        if cs.callee is None and cs.last_name in last_names and (cs.last_name not in UBIQUITOUS_METHODS or cs.file in package_files):
             reasons.append(Reason("unresolved_call", cs.file, cs.line, cs.code,
                                   f"receiver of .{cs.last_name}() could not be resolved; confirm it is not a {dep.name} object"))
     for m in app.dynamic:
