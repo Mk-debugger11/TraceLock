@@ -1,0 +1,100 @@
+{
+ "_comment": "Runtime Requires-Dist (extras dropped) per pinned version, from pypi.org JSON API. Regenerate with backend/tracelock/data/refresh_pypi_requires.py.",
+ "_meta": {
+  "generated_at": "2026-10-31T19:37:46Z",
+  "source": "https://pypi.org/pypi/<name>/<version>/json info.requires_dist"
+ },
+ "aiohttp": {
+  "3.9.1": [
+   "aiosignal",
+   "async-timeout",
+   "attrs",
+   "frozenlist",
+   "multidict",
+   "yarl"
+  ]
+ },
+ "black": {
+  "23.12.1": [
+   "click",
+   "mypy-extensions",
+   "packaging",
+   "pathspec",
+   "platformdirs",
+   "tomli",
+   "typing-extensions"
+  ]
+ },
+ "certifi": {
+  "2022.9.24": []
+ },
+ "cryptography": {
+  "41.0.5": [
+   "cffi"
+  ]
+ },
+ "flask": {
+  "2.2.5": [
+   "click",
+   "importlib-metadata",
+   "itsdangerous",
+   "jinja2",
+   "werkzeug"
+  ]
+ },
+ "jinja2": {
+  "3.1.2": [
+   "markupsafe"
+  ],
+  "3.1.3": [
+   "markupsafe"
+  ]
+ },
+ "pillow": {
+  "10.1.0": [],
+  "9.3.0": []
+ },
+ "pyjwt": {
+  "2.3.0": []
+ },
+ "python-multipart": {
+  "0.0.6": []
+ },
+ "pyyaml": {
+  "5.3": []
+ },
+ "requests": {
+  "2.30.0": [
+   "certifi",
+   "charset-normalizer",
+   "idna",
+   "urllib3"
+  ],
+  "2.31.0": [
+   "certifi",
+   "charset-normalizer",
+   "idna",
+   "urllib3"
+  ]
+ },
+ "setuptools": {
+  "69.0.3": []
+ },
+ "tqdm": {
+  "4.66.1": [
+   "colorama"
+  ]
+ },
+ "urllib3": {
+  "1.26.17": [],
+  "2.0.6": []
+ },
+ "werkzeug": {
+  "2.2.2": [
+   "markupsafe"
+  ],
+  "3.0.2": [
+   "markupsafe"
+  ]
+ }
+}

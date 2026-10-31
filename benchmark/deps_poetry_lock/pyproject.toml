@@ -1,0 +1,9 @@
+[tool.poetry]
+name = "config-loader"
+version = "0.1.0"
+description = "fixture: poetry.lock is the source of truth"
+authors = ["TraceLock <bench@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pyyaml = "^5.3"
