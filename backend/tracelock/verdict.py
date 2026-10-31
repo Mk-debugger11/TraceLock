@@ -31,6 +31,11 @@ ENTRY_RANK = {"main": 0, "route": 1, "module": 2, "test": 3, "runtime": 0, "orph
 REASON_RANK = {"unresolved_call": 0, "string_ref": 1, "star_import": 2, "transitive": 3, "dynamic": 4,
                "no_function_data": 5, "safe_arg_variable": 6, "also_called_at": 7}
 MAX_REASONS = 8
+# str/bytes/dict/list methods that appear on unresolved receivers everywhere; an unresolved `x.decode()`
+# is far more likely bytes.decode than jwt.decode, so these never create an unresolved_call reason.
+UBIQUITOUS_METHODS = {"decode", "encode", "get", "items", "keys", "values", "update", "pop", "append", "extend",
+                      "format", "join", "split", "strip", "lower", "upper", "replace", "read", "write", "close",
+                      "copy", "startswith", "endswith", "setdefault", "insert", "remove", "sort", "count", "index"}
 
 
 def _matches_safe(value: Optional[str], safe_values: list[str]) -> bool:
@@ -186,7 +191,7 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
 
     # 3. Uncertainty sources
     for cs in app.calls:
-        if cs.callee is None and cs.last_name in last_names:
+        if cs.callee is None and cs.last_name in last_names and cs.last_name not in UBIQUITOUS_METHODS:
             reasons.append(Reason("unresolved_call", cs.file, cs.line, cs.code,
                                   f"receiver of .{cs.last_name}() could not be resolved; confirm it is not a {dep.name} object"))
     for m in app.dynamic:
@@ -204,7 +209,11 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
     if spec.tier == TIER_NONE:
         reasons.append(Reason("no_function_data", None, None, f"{adv.id} names no vulnerable function and has no usable fix commit",
                               "read the advisory and fix manually; treat as affected until then"))
-    if via:
+    # A bridge whose source we analysed and found no path through does not block a verdict when the
+    # package is also imported directly; an unanalysed bridge, or a package never imported directly, does.
+    bridged = getattr(exposure, "bridged", set())
+    unanalysed_via = [v for v in via if v not in bridged]
+    if via and (not imported or unanalysed_via):
         how = "is not imported directly but" if not imported else "is imported directly, and is also"
         reasons.append(Reason("transitive", None, None, f"{dep.name} {how} required by {', '.join(via)} which the app imports",
                               f"check whether the {via[0]} APIs the app calls reach {dep.name}"))
