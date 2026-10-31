@@ -9,6 +9,7 @@ Fill it for the seed advisories (needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, 
 
     cd backend && python -m tracelock.kb.llm --seed            # all curated advisories
     cd backend && python -m tracelock.kb.llm --seed CVE-2024-47081
+    cd backend && python -m tracelock.kb.llm --seed --fixture ../benchmark/real_flask_app   # all 108 advisories
 
 The seed run downloads each pinned wheel to `.tracelock/cache/src/` (unzipped, never executed) and
 prints how many LLM proposals overlap the hand-curated `entry_api` (the accuracy number for the pitch).

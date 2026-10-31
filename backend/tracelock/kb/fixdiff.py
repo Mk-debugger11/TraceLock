@@ -403,6 +403,18 @@ def functions_from_fix(adv: Advisory, dep: Dependency, offline: bool = False) ->
     return sorted(quals), hunks, first_url
 
 
+def persist(adv: Advisory) -> int:
+    """Copy this advisory's cached fix-commit analyses (and diffs) into data/fixes/ for --offline use."""
+    copied = 0
+    for _owner, _repo, sha in candidate_commits(adv, offline=True):
+        for suffix in (".json", ".diff"):
+            src, dst = CACHE_DIR / f"{sha}{suffix}", DATA_FIXES / f"{sha}{suffix}"
+            if src.exists() and not dst.exists():
+                dst.write_bytes(src.read_bytes())
+                copied += 1
+    return copied
+
+
 def cached_hunks(commit_url: Optional[str], dep: Dependency) -> list[str]:
     """Evidence hunks for a curated entry's fix commit, from data/fixes only (never the network)."""
     m = COMMIT_RE.match(commit_url or "")

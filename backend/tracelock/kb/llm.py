@@ -16,9 +16,10 @@ The cache is read first, so demos never wait on the network; it also records whi
 passed verification against that exact package version, so --offline runs without the source
 can reuse them (cached_verified).
 
-    python -m tracelock.kb.llm --seed [CVE ...]   # needs a key: fills data/llm_cache for the seed
-                                                   # advisories (downloads their wheels to
-                                                   # .tracelock/cache/src, never executes them)
+    python -m tracelock.kb.llm --seed [CVE ...]            # needs a key: curated seed advisories
+    python -m tracelock.kb.llm --seed --fixture ../benchmark/real_flask_app   # every advisory of a project
+        Downloads the pinned wheels to .tracelock/cache/src (unzipped, never executed), writes
+        data/llm_cache/<id>.json and copies the fix-commit analysis into data/fixes/.
 """
 from __future__ import annotations
 
@@ -284,44 +285,72 @@ def _fetch_wheel_source(name: str, version: str) -> Optional[Path]:
     return dest
 
 
-def _seed(cves: list[str]) -> int:
-    from .. import deps as deps_mod, osv
-    from . import _curated, fixdiff  # noqa: PLC0415
+def _seed_one(adv: Advisory, dep: Dependency, curated_entry: Optional[list] = None) -> tuple[list[str], bool]:
+    """Propose + verify one advisory against the real wheel; persist LLM and fix-commit results under data/."""
+    from . import fixdiff  # noqa: PLC0415
+    lib_src = _fetch_wheel_source(dep.name, dep.version)
+    if lib_src is None:
+        print(f"{adv.id} {dep.name}=={dep.version}: no wheel on PyPI, skipped", file=sys.stderr)
+        return [], False
+    funcs, hunks, commit = fixdiff.functions_from_fix(adv, dep)
+    if not funcs:
+        print(f"{adv.id} {dep.name}=={dep.version}: fix commit names no function, skipped", file=sys.stderr)
+        return [], False
+    fixdiff.persist(adv)  # copy the fix-commit analysis into data/fixes so --offline sees the functions
+    spec = VulnSpec(advisory_id=adv.id, package=dep.name, vulnerable_funcs=funcs, evidence_hunks=hunks, fix_commit=commit)
+    proposed = propose_entry_api(adv, dep, spec, lib_src)
+    verified = [n for n in proposed if symbol_exists(lib_src, dep, n)]
+    entry = _read_cache(adv, dep) or {}
+    entry.update({"verified": verified, "verified_version": dep.version, "rejected": [n for n in proposed if n not in verified]})
+    _write_cache(entry, adv, DATA_CACHE)
+    overlap = bool(set(curated_entry or []) & set(verified))
+    print(f"{adv.id} {dep.name}=={dep.version}: verified {verified} rejected {entry['rejected']}"
+          + (f"  [overlaps curated: {overlap}]" if curated_entry else ""), file=sys.stderr)
+    return verified, overlap
+
+
+def _seed(args: list[str]) -> int:
+    """--seed [CVE ...]: curated advisories at their seed pins. --seed --fixture DIR: every advisory of a project."""
+    from .. import deps as deps_mod, osv  # noqa: PLC0415
+    from . import _curated  # noqa: PLC0415
+    if args[:1] == ["--fixture"]:
+        root = Path(args[1])
+        dependencies = deps_mod.scan_dependencies(root)
+        found = osv.lookup(dependencies, offline=True)
+        done = 0
+        for dep in dependencies:
+            for adv in found.get(dep.name, []):
+                done += bool(_seed_one(adv, dep)[0])
+        print(f"{done} advisories in {root} now have verified entry points cached", file=sys.stderr)
+        return 0
     curated = _curated()
     snapshot = osv._load_snapshot()
     pins = {"pyyaml": "5.3", "jinja2": "3.1.2", "requests": "2.30.0", "urllib3": "2.0.6", "pillow": "10.1.0",
             "werkzeug": "2.2.2", "flask": "2.2.4", "setuptools": "69.0.3", "pyjwt": "2.3.0", "python-multipart": "0.0.6",
             "aiohttp": "3.9.1", "black": "23.12.1", "cryptography": "41.0.5", "tqdm": "4.66.1", "certifi": "2022.9.24"}
-    targets = cves or [k for k in curated if not k.startswith("_")]
-    agree = 0
+    targets = args or [k for k in curated if not k.startswith("_")]
+    agree = tried = 0
     for cve in targets:
-        package = curated.get(cve, {}).get("package") or next((p for p, recs in snapshot.items()
-                                                                if any(cve in r.get("aliases", []) for r in recs)), None)
+        package = curated.get(cve, {}).get("package") or next(
+            (p for p, recs in snapshot.items() if any(cve in r.get("aliases", []) for r in recs)), None)
         if not package:
             print(f"{cve}: not in snapshot", file=sys.stderr)
             continue
         adv = osv.merge_aliases([r for r in snapshot[package] if cve in r.get("aliases", []) or r["id"] == cve], package)[0]
         dep = Dependency(package, pins.get(package, "0"), import_names=deps_mod.import_names_for(package))
-        lib_src = _fetch_wheel_source(package, dep.version)
-        funcs, hunks, commit = fixdiff.functions_from_fix(adv, dep)
-        spec = VulnSpec(advisory_id=adv.id, package=package, vulnerable_funcs=funcs, evidence_hunks=hunks, fix_commit=commit)
-        proposed = propose_entry_api(adv, dep, spec, lib_src)
-        verified = [n for n in proposed if symbol_exists(lib_src, dep, n)]
-        entry = _read_cache(adv, dep) or {}
-        entry.update({"verified": verified, "verified_version": dep.version,
-                      "rejected": [n for n in proposed if n not in verified]})
-        _write_cache(entry, adv, DATA_CACHE)
-        cur = set(curated.get(cve, {}).get("entry_api", []))
-        hit = bool(cur & set(verified))
-        agree += hit
-        print(f"{cve} {package}=={dep.version}: verified {verified} rejected {entry['rejected']}"
-              + (f"  [overlaps curated: {hit}]" if cur else ""), file=sys.stderr)
-    print(f"{agree}/{len(targets)} LLM proposals overlap the hand-curated entry_api", file=sys.stderr)
+        verified, overlap = _seed_one(adv, dep, curated.get(cve, {}).get("entry_api"))
+        tried += bool(verified)
+        agree += overlap
+    print(f"{agree}/{tried} verified LLM proposals overlap the hand-curated entry_api", file=sys.stderr)
     return 0
 
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--seed"]:
-        sys.exit(_seed(sys.argv[2:]))
+        try:
+            sys.exit(_seed(sys.argv[2:]))
+        except RuntimeError as exc:  # no key / provider configured
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(2)
     print(__doc__)
     sys.exit(2)
