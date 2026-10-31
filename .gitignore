@@ -10,3 +10,5 @@ venv/
 .pytest_cache/
 workspace/
 .tracelock/
+frontend/.vite/
+frontend/node_modules/
