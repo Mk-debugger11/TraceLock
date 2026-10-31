@@ -1,0 +1,38 @@
+{
+  "_comment": "Offline fallback for osv.lookup(). Key = normalised PyPI name, value = list of OSV records (same shape as api.osv.dev/v1/vulns/<id>). Vaibhav: replace these hand-written entries with the real JSON from OSV for every seed package.",
+  "pyyaml": [
+    {
+      "id": "GHSA-8q59-q68h-6hv4",
+      "aliases": ["CVE-2020-14343", "PYSEC-2021-142"],
+      "summary": "Improper Input Validation in PyYAML",
+      "details": "A vulnerability was discovered in the PyYAML library in versions before 5.4, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full_load method or with the FullLoader loader. Applications that use the library to process untrusted input may be vulnerable to this flaw. This flaw allows an attacker to execute arbitrary code on the system by abusing the python/object/new constructor. This flaw is due to an incomplete fix for CVE-2020-1747.",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "pyyaml"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "5.4"}]}]
+        }
+      ],
+      "references": [
+        {"type": "ADVISORY", "url": "https://nvd.nist.gov/vuln/detail/CVE-2020-14343"},
+        {"type": "FIX", "url": "https://github.com/yaml/pyyaml/commit/a001f2782501ad2d24986e6cd05b5e2ba3f5d32e"},
+        {"type": "WEB", "url": "https://github.com/yaml/pyyaml/issues/420"}
+      ]
+    },
+    {
+      "id": "GHSA-6757-jp84-gxfx",
+      "aliases": ["CVE-2020-1747", "PYSEC-2020-176"],
+      "summary": "Improper Input Validation in PyYAML",
+      "details": "A vulnerability was discovered in the PyYAML library in versions before 5.3.1, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full_load method or with the FullLoader loader. Applications that use the library to process untrusted input may be vulnerable to this flaw. An attacker could use this flaw to execute arbitrary code on the system by abusing the python/object/new constructor.",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "pyyaml"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "5.1"}, {"fixed": "5.3.1"}]}]
+        }
+      ],
+      "references": [
+        {"type": "ADVISORY", "url": "https://nvd.nist.gov/vuln/detail/CVE-2020-1747"},
+        {"type": "WEB", "url": "https://github.com/yaml/pyyaml/pull/386"}
+      ]
+    }
+  ]
+}
