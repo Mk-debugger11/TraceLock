@@ -5,7 +5,15 @@ One JSON file per advisory id, written by `tracelock.kb.llm`: the raw model repl
 (`verified`, `verified_version`, `rejected`). `kb.resolve()` reads this before calling any model and,
 offline without the package source, reuses only `verified` names for the same version.
 
-Fill it for the seed advisories (needs `TRACELOCK_LLM_ENABLED=true`; provider from `TRACELOCK_LLM_PROVIDER`, default local Ollama):
+Fill it with a local open-weight model (nothing leaves the machine), running in Docker:
+
+    docker compose up -d ollama
+    docker compose exec ollama ollama pull qwen2.5-coder:3b
+    export TRACELOCK_LLM_ENABLED=true              # OLLAMA_MODEL overrides the model (e.g. qwen2.5-coder:7b)
+
+or any OpenAI-compatible server hosting open models (`TRACELOCK_LLM_PROVIDER=openai`,
+`OPENAI_BASE_URL=https://api.groq.com/openai/v1`, `TRACELOCK_LLM_MODEL=llama-3.3-70b-versatile`,
+`OPENAI_API_KEY=...`), then:
 
     cd backend && python -m tracelock.kb.llm --seed            # all curated advisories
     cd backend && python -m tracelock.kb.llm --seed CVE-2024-47081

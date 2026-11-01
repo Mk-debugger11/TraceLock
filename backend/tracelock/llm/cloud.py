@@ -77,7 +77,8 @@ class OpenAIProvider(_Cloud):
     def chat_json(self, system: str, user: str, schema: dict) -> ChatResult:
         self.check_available()
         t0 = time.monotonic()
-        data = _post("https://api.openai.com/v1/chat/completions",
+        base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")   # vLLM, Groq, OpenRouter, ...
+        data = _post(f"{base}/chat/completions",
                      {"model": self.model, "temperature": 0, "response_format": {"type": "json_object"},
                       "messages": [{"role": "system", "content": system},
                                    {"role": "user", "content": user + "\n\nJSON schema:\n" + json.dumps(schema)}]},
