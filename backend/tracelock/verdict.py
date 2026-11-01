@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Optional
 
 from .app_graph import AppModel, CallSite
-from .models import (NOT_REACHABLE, REACHABLE, TIER_NONE, UNCERTAIN, Advisory, CallStep, Dependency,
+from .models import (NOT_REACHABLE, REACHABLE, TIER_NATIVE, TIER_NONE, UNCERTAIN, Advisory, CallStep, Dependency,
                      Finding, Reason, VulnSpec)
 
 
@@ -29,6 +29,7 @@ def _is_hit(cs: CallSite, targets: set[str], last_names: set[str], import_names:
 
 ENTRY_RANK = {"main": 0, "route": 1, "module": 2, "test": 3, "runtime": 0, "orphan": 9}
 REASON_RANK = {"unresolved_call": 0, "string_ref": 1, "star_import": 2, "transitive": 3, "dynamic": 4,
+               "dependency_graph_incomplete": 4, "native_mapping_incomplete": 5,
                "no_function_data": 5, "reference": 6, "safe_arg_variable": 6, "also_called_at": 7}
 MAX_REASONS = 8
 # str/bytes/dict/list methods that appear on unresolved receivers everywhere. In a file that does not import
@@ -136,8 +137,23 @@ TIER_BASE_NOTE = {
     "ecosystem_specific": "advisory's own affected-imports list",
     "fix_commit": "functions mapped from the fix commit",
     "llm_verified": "LLM-proposed functions, verified against the source",
+    "native_mapped": "native (C/Rust) fix mapped to the Python wrappers that call it",
     "none": "no function data",
 }
+
+
+def _no_function_data(adv: Advisory, spec: VulnSpec) -> Reason:
+    native = spec.discovery.get("native") or {}
+    llm = spec.discovery.get("llm") or {}
+    if native.get("changed_functions") or native.get("gaps"):
+        gap = (native.get("gaps") or [{}])[0]
+        detail = (f"{adv.id} is fixed in native code ({', '.join(c['name'] for c in native.get('changed_functions', [])[:3]) or 'no function identified'}); "
+                  f"it could not be mapped to Python: {gap.get('detail', 'no Python-visible path found')[:160]}")
+    else:
+        detail = f"{adv.id} names no vulnerable function and has no usable fix commit"
+    if llm.get("status") in ("unavailable", "model_missing", "timeout"):
+        detail += f". Local LLM unavailable ({llm['status']}); deterministic analysis completed"
+    return Reason("no_function_data", None, None, detail, "read the advisory and fix manually; treat as affected until then")
 
 
 def _base_factor(spec: VulnSpec, default: float) -> dict:
@@ -145,8 +161,82 @@ def _base_factor(spec: VulnSpec, default: float) -> dict:
     return {"factor": f"function data: {spec.tier}", "effect": f"base {base:.2f}", "note": TIER_BASE_NOTE.get(spec.tier, spec.tier)}
 
 
+def requirement_chain(dep: Dependency, app: AppModel, all_deps: list[Dependency]) -> tuple[list[str], list[str]]:
+    """Walk Requires-Dist from every package the app imports. Returns (chain to dep, or [], packages whose
+    requirement metadata is unknown). Unpinned intermediates use the bundled PyPI metadata snapshot."""
+    from .deps import requires_for_name
+    by_name = {d.name: d for d in all_deps}
+    starts = [d.name for d in all_deps if d.name != dep.name and app.imports_any(d.import_names)]
+    parent: dict[str, Optional[str]] = {s: None for s in starts}
+    queue, unknown = list(starts), []
+    while queue:
+        cur = queue.pop(0)
+        if cur in by_name:
+            reqs = [r.lower() for r in by_name[cur].requires]
+        else:
+            known = requires_for_name(cur)
+            if known is None:
+                unknown.append(cur)
+                continue
+            reqs = known
+        for r in reqs:
+            if r == dep.name:
+                chain, node = [dep.name, cur], cur
+                while parent.get(node):
+                    node = parent[node]
+                    chain.append(node)
+                return list(reversed(chain)), unknown
+            if r not in parent:
+                parent[r] = cur
+                queue.append(r)
+    return [], sorted(set(unknown))
+
+
+def package_absence(app: AppModel, dep: Dependency, all_deps: list[Dependency],
+                    library_imports: Optional[dict]) -> tuple[bool, list[Reason]]:
+    """Package-level safety, independent of function data: True only if nothing can load the package.
+
+    1. no app module imports it, and no star import / re-export does (`app.imports_any`)
+    2. no package in the app's resolved requirement graph requires it, and that graph is fully known
+    3. no imported library's own source imports it (optional imports are not in Requires-Dist)
+    4. no dynamic import or other dynamic feature in the app, and no string naming the package
+    Any failed condition is returned as a blocking reason."""
+    reasons: list[Reason] = []
+    if app.imports_any(dep.import_names):
+        return False, reasons
+    chain, unknown = requirement_chain(dep, app, all_deps)
+    if chain:
+        reasons.append(Reason("transitive", None, None, f"{dep.name} is required through {' -> '.join(chain)}",
+                              f"check whether the {chain[0]} APIs the app calls load {dep.name}"))
+    if unknown:
+        reasons.append(Reason("dependency_graph_incomplete", None, None,
+                              f"requirement metadata unknown for {', '.join(unknown[:5])}; they could require {dep.name}",
+                              "pin these packages or scan with a lock file"))
+    for d in all_deps:
+        if d.name == dep.name or not app.imports_any(d.import_names):
+            continue
+        tops = (library_imports or {}).get(d.name)
+        if tops is None:
+            reasons.append(Reason("dependency_graph_incomplete", None, None,
+                                  f"source of {d.name} unavailable, so its optional imports of {dep.name} cannot be ruled out",
+                                  f"rescan online so {d.name}'s source can be inspected"))
+        elif set(tops) & set(dep.import_names):
+            reasons.append(Reason("transitive", None, None, f"{d.name}'s own source imports {', '.join(sorted(set(tops) & set(dep.import_names)))}",
+                                  f"check whether the {d.name} APIs the app calls load it"))
+    for m in app.dynamic:
+        reasons.append(Reason("dynamic", m.file, m.line, m.detail, f"{m.kind} could load {dep.name}; confirm it never does"))
+    seen = set()
+    for s_ in app.strings:
+        if s_.value in dep.import_names or any(s_.value.startswith(n + ".") for n in dep.import_names):
+            if (s_.file, s_.value) not in seen:
+                seen.add((s_.file, s_.value))
+                reasons.append(Reason("string_ref", s_.file, s_.line, s_.value, f"a string names {dep.name}; check it is not imported dynamically"))
+    return not reasons, reasons
+
+
 def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposure: set[str],
-           trace: Optional[dict] = None, all_deps: Optional[list[Dependency]] = None) -> Finding:
+           trace: Optional[dict] = None, all_deps: Optional[list[Dependency]] = None,
+           library_imports: Optional[dict] = None) -> Finding:
     targets = spec.targets() | set(exposure)
     last_names = {_last(t) for t in targets}
     import_hits = app.imports_any(dep.import_names)
@@ -300,8 +390,15 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         reasons.append(Reason("version_unpinned", None, None, f"{dep.name} has no pinned version, so this advisory may not apply",
                               f"pin {dep.name} to an exact version and rescan"))
     if spec.tier == TIER_NONE:
-        reasons.append(Reason("no_function_data", None, None, f"{adv.id} names no vulnerable function and has no usable fix commit",
-                              "read the advisory and fix manually; treat as affected until then"))
+        reasons.append(_no_function_data(adv, spec))
+    native = spec.discovery.get("native") or {}
+    if spec.tier == TIER_NATIVE and not native.get("complete"):
+        gaps = native.get("gaps") or []
+        first = gaps[0] if gaps else {}
+        reasons.append(Reason("native_mapping_incomplete", first.get("file"), first.get("line"),
+                              f"the native fix is mapped to Python wrappers, but {native.get('gap_count', len(gaps))} path(s) "
+                              f"cannot be followed exactly (e.g. {first.get('kind', 'unknown')}: {first.get('detail', '')[:140]})",
+                              "a call to one of the mapped functions is REACHABLE; their absence does not prove safety"))
     # A bridge whose source we analysed and found no path through does not block a verdict when the
     # package is also imported directly; an unanalysed bridge, or a package never imported directly, does.
     bridged = getattr(exposure, "bridged", set())
@@ -322,12 +419,34 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
         "function_data_available": spec.tier != TIER_NONE,
         "not_transitively_required": not via,
     }
-    blocking = [r for r in reasons if r.kind in {"unresolved_call", "dynamic", "string_ref", "star_import", "no_function_data", "transitive", "version_unpinned"}]
+    blocking = [r for r in reasons if r.kind in {"unresolved_call", "dynamic", "string_ref", "star_import", "no_function_data",
+                                                 "transitive", "version_unpinned", "native_mapping_incomplete"}]
 
-    # 4. Not imported at all (and nothing dynamic that could import it)
+    # 4. Not imported at all (and nothing dynamic that could import it).
+    # Missing function data does not matter when the whole package provably never loads, so it stops
+    # blocking only after the package-level checks pass (requirement graph, library imports, dynamic loading).
+    absent_reasons: list[Reason] = []
+    if not imported and all_deps is not None:
+        absent, absent_reasons = package_absence(app, dep, all_deps, library_imports)
+        if absent and not unpinned:
+            blocking = [r for r in blocking if r.kind != "no_function_data"]
+        elif spec.tier == TIER_NONE:
+            known = {(r.kind, r.detail) for r in reasons}
+            extra = [r for r in absent_reasons if (r.kind, r.detail) not in known]
+            reasons.extend(extra)
+            blocking.extend(extra)
+        else:
+            # Function data exists: only positive evidence (a requirement chain, a library import) blocks.
+            extra = [r for r in absent_reasons if r.kind == "transitive" and (r.kind, r.detail) not in {(x.kind, x.detail) for x in reasons}]
+            reasons.extend(extra)
+            blocking.extend(extra)
     if not imported and not blocking:
+        if spec.tier == TIER_NONE:
+            checklist["package_absent_from_dependency_graph"] = True
         return Finding(adv, dep, spec, NOT_REACHABLE, round(max(spec.confidence, 0.9), 2), entry_kind=None,
-                       reasons=[Reason("not_imported", None, None, f"no module in {dep.import_names} is imported by the app", "")], checklist=checklist,
+                       reasons=[Reason("not_imported", None, None, f"no module in {dep.import_names} is imported by the app"
+                                       + (", nothing in its requirement graph needs it, and no imported library loads it" if spec.tier == TIER_NONE else ""), "")],
+                       checklist=checklist,
                        confidence_factors=[{"factor": "package never imported", "effect": f"floor 0.90",
                                             "note": "independent of function data: no module of the package is imported anywhere and nothing dynamic could import it"}])
 
@@ -343,11 +462,15 @@ def decide(app: AppModel, dep: Dependency, adv: Advisory, spec: VulnSpec, exposu
     detail = "all call sites use safe arguments" if hits else ("calls seen instead: " + ", ".join(seen_calls) if seen_calls else "imported but never called")
     has_unresolved = any(cs.callee is None for cs in app.calls)
     derived_only = bool(not spec.entry_api and exposure)
+    native_mapped = spec.tier == TIER_NATIVE
     conf = (spec.confidence or 0.7) * (0.9 if has_unresolved else 1.0) * (0.8 if derived_only else 1.0)
     factors = [_base_factor(spec, 0.7), {"factor": "soundness checklist", "effect": "x1.00", "note": f"all {sum(1 for v in checklist.values() if v is True)} checks passed"}]
     if has_unresolved:
         factors.append({"factor": "unresolved calls elsewhere", "effect": "x0.90", "note": "some receivers in the app could not be typed (none share a vulnerable name)"})
     if derived_only:
         factors.append({"factor": "public API derived", "effect": "x0.80", "note": "entry symbols were computed from the library source, not stated by the advisory"})
+    if native_mapped:
+        conf *= 0.8
+        factors.append({"factor": "native mapping", "effect": "x0.80", "note": "C/Rust registrations mapped to Python wrappers with no gaps"})
     return Finding(adv, dep, spec, NOT_REACHABLE, round(conf, 2), reasons=[Reason("no_path", None, None, detail, "")], checklist=checklist,
                    confidence_factors=factors)

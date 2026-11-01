@@ -23,6 +23,17 @@ SEED_PINS = [
     "urllib3==1.26.17", "urllib3==2.0.6", "pillow==9.3.0", "pillow==10.1.0", "werkzeug==2.2.2",
     "werkzeug==3.0.2", "flask==2.2.5", "setuptools==69.0.3", "pyjwt==2.3.0", "python-multipart==0.0.6",
     "aiohttp==3.9.1", "black==23.12.1", "cryptography==41.0.5", "certifi==2022.9.24", "tqdm==4.66.1",
+    "flask==2.2.4",
+]
+# Packages the seed pins require but projects rarely pin themselves. The verdict engine's unused-package
+# rule walks the whole requirement graph; for an unpinned intermediate it takes the union of the
+# requirements of every version recorded here (a version of the time of the pins, and a current one).
+INTERMEDIATE_PINS = [
+    "itsdangerous==2.1.2", "itsdangerous==2.2.0", "click==8.1.7", "click==8.5.0",
+    "importlib-metadata==6.8.0", "importlib-metadata==10.1.0", "zipp==3.17.0", "zipp==4.1.2",
+    "markupsafe==2.1.3", "markupsafe==3.0.4", "charset-normalizer==3.3.2", "charset-normalizer==3.5.2",
+    "idna==3.4", "idna==3.20", "cffi==1.16.0", "cffi==2.1.1", "pycparser==2.21", "pycparser==3.12",
+    "colorama==0.4.6", "typing-extensions==4.8.0", "typing-extensions==4.16.0",
 ]
 _NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
@@ -44,7 +55,7 @@ def runtime_requires(requires_dist: list[str] | None) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    pins = argv or SEED_PINS
+    pins = argv or SEED_PINS + INTERMEDIATE_PINS
     data = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {}
     for pin in pins:
         name, _, version = pin.partition("==")
