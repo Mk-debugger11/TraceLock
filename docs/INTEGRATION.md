@@ -86,4 +86,5 @@ docker compose up            # API on :5001, UI on :3000; drop projects into ./p
 | `TRACELOCK_ALLOW_LOCAL_PATHS=1` | let the web UI scan folders on the server (off by default) |
 | `TRACELOCK_DATABASE_URL` | SQLAlchemy URL for scan history (default SQLite in `backend/`) |
 | `TRACELOCK_WORKSPACE_ROOT` | where fetched repositories are unpacked |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enable the LLM tier (proposals are verified against source; responses are cached) |
+| `TRACELOCK_LLM_ENABLED` / `TRACELOCK_LLM_PROVIDER` | local LLM help (default off; provider `ollama`). An API key alone never enables a cloud model. See [LOCAL_LLM.md](LOCAL_LLM.md) |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` from the host, `http://ollama:11434` inside Compose; `qwen2.5-coder:3b` |

@@ -1,51 +1,149 @@
 import { useState, useRef, useEffect } from 'react'
-import {
-  Shield,
-  FolderArchive,
-  FolderOpen,
-  GitBranch,
-  ArrowRight,
-  Loader2,
-  AlertCircle,
-  UploadCloud,
-  FileCode2,
-  RefreshCw
-} from 'lucide-react'
+import { Loader2, AlertCircle, RefreshCw, Upload, FolderOpen, GitBranch } from 'lucide-react'
 import { listScans, fetchBranches, getResult, getScan, submitScan } from './api'
 import Results from './Results'
 
 const POLL_MS = 1000
 
-const STAGE_LABELS = {
-  queued: 'Waiting for the worker',
-  repository_fetch: 'Fetching the project',
-  repository_fetched: 'Project fetched',
-  analysis: 'Tracing call paths to vulnerable functions',
-  analyzed: 'Done',
+// The worker's stages, in order. Shown as a sequence while a scan runs.
+const STAGES = [
+  { key: 'queued', label: 'Queued' },
+  { key: 'repository_fetch', label: 'Fetching project' },
+  { key: 'analysis', label: 'Tracing call paths' },
+  { key: 'analyzed', label: 'Done' },
+]
+const stageIndex = (stage) => {
+  if (stage === 'repository_fetched') return 1
+  const i = STAGES.findIndex((s) => s.key === stage)
+  return i < 0 ? 0 : i
 }
 
-// Clean GitHub SVG icon
-const GithubIcon = ({ size = 16, className = '' }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    className={className}
-    style={{ display: 'inline-block', verticalAlign: 'middle' }}
-  >
-    <path
-      fillRule="evenodd"
-      clipRule="evenodd"
-      d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
-    />
-  </svg>
-)
+const SOURCES = [
+  { key: 'github', label: 'GitHub' },
+  { key: 'upload', label: 'Zip file' },
+  { key: 'local', label: 'Server folder' },
+]
 
 // ?scan=<id> in the URL, so a refresh or a shared link reopens the same result.
 const initialScanId = () => new URLSearchParams(window.location.search).get('scan')
 
+function Mark() {
+  return (
+    <svg className="mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="currentColor" />
+      <circle cx="10" cy="9" r="3" fill="#fff" />
+      <circle cx="10" cy="23" r="3" fill="none" stroke="#fff" strokeWidth="2" />
+      <circle cx="22" cy="23" r="3.4" fill="#E5484D" />
+      <path d="M10 12v8M13 23h5.5" stroke="#fff" strokeWidth="2" />
+    </svg>
+  )
+}
+
+function projectLabel(scan) {
+  if (!scan) return ''
+  const url = scan.repository_url || ''
+  if (scan.source_type === 'local' || scan.source_type === 'upload' || url.startsWith('/')) {
+    return url.split(/[\\/]/).filter(Boolean).pop() || 'Uploaded project'
+  }
+  return url.replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '') || 'project'
+}
+
+function Progress({ scan }) {
+  const current = stageIndex(scan?.stage)
+  return (
+    <section className="progress" aria-live="polite">
+      <ol className="stages">
+        {STAGES.map((s, i) => (
+          <li key={s.key} className={i < current ? 'done' : i === current ? 'current' : ''}>
+            <span className="stage-dot" aria-hidden="true">
+              {i === current && <Loader2 size={12} className="spin" />}
+            </span>
+            {s.label}
+          </li>
+        ))}
+      </ol>
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${scan?.progress ?? 4}%` }} />
+      </div>
+    </section>
+  )
+}
+
+function History({ history, scanId, onRefresh }) {
+  if (history.length === 0) {
+    return (
+      <section className="history">
+        <p className="empty">No scans yet. Scans you run appear here, with their verdict counts.</p>
+      </section>
+    )
+  }
+  return (
+    <section className="history">
+      <div className="history-head">
+        <h2>Recent scans</h2>
+        <button type="button" className="btn btn-quiet" onClick={onRefresh}>
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+      <div className="table-scroll">
+        <table className="history-table">
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Ref</th>
+              <th>Started</th>
+              <th>Status</th>
+              <th className="num">Reachable</th>
+              <th className="num">Uncertain</th>
+              <th className="num">Not reachable</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map((h) => (
+              <tr key={h.scan_id} className={h.scan_id === scanId ? 'current' : ''}>
+                <td>
+                  <a href={`?scan=${encodeURIComponent(h.scan_id)}`} title={h.repository_url}>
+                    {projectLabel(h).slice(0, 56)}
+                  </a>
+                </td>
+                <td className="code">{h.ref || ''}</td>
+                <td>{h.created_at ? new Date(h.created_at).toLocaleString() : ''}</td>
+                <td>
+                  <span className={`status status-${h.status}`}>{h.status}</span>
+                </td>
+                <td className="num v-reachable">{h.counts ? h.counts.reachable : '–'}</td>
+                <td className="num v-uncertain">{h.counts ? h.counts.uncertain : '–'}</td>
+                <td className="num v-not-reachable">{h.counts ? h.counts.not_reachable : '–'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function Intro() {
+  return (
+    <dl className="intro">
+      <div>
+        <dt className="v-reachable">Reachable</dt>
+        <dd>Your code calls the vulnerable function. You get the call path, line by line.</dd>
+      </div>
+      <div>
+        <dt className="v-uncertain">Uncertain</dt>
+        <dd>Something can't be ruled out. You get the line to look at, never a guess.</dd>
+      </div>
+      <div>
+        <dt className="v-not-reachable">Not reachable</dt>
+        <dd>Every check that could make it reachable passed. You get the checklist as proof.</dd>
+      </div>
+    </dl>
+  )
+}
+
 function App() {
+  const [view, setView] = useState('scan')
   const [repoType, setRepoType] = useState('github')
   const [repoUrl, setRepoUrl] = useState('')
   const [repoFile, setRepoFile] = useState(null)
@@ -60,21 +158,23 @@ function App() {
   const [scan, setScan] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [history, setHistory] = useState([])
 
   const fileInputRef = useRef(null)
   const scanning = Boolean(scanId) && !result && !error
-  const [history, setHistory] = useState([])
 
   const refreshHistory = async () => {
     try {
-      const data = await listScans(12)
+      const data = await listScans(20)
       setHistory(data.scans || [])
     } catch {
       /* history is a convenience; never block the page on it */
     }
   }
 
-  useEffect(() => { refreshHistory() }, [result, error])
+  useEffect(() => {
+    refreshHistory()
+  }, [result, error])
 
   useEffect(() => {
     if (!scanId) return
@@ -90,7 +190,7 @@ function App() {
           const data = await getResult(scanId)
           if (!cancelled) setResult(data)
         } else if (status.status === 'failed') {
-          setError(status.error || 'The scan failed')
+          setError(status.error || 'The scan failed without an error message.')
         } else {
           timer = setTimeout(poll, POLL_MS)
         }
@@ -110,22 +210,11 @@ function App() {
     if (!repoUrl) return
     setFetchingBranches(true)
     setBranchError(null)
-
     try {
-      const branchNames = (await fetchBranches(repoUrl)).branches || []
-
-      if (branchNames.length === 0) {
-        throw new Error('No branches found in this repository')
-      }
-
-      setBranches(branchNames)
-      if (branchNames.includes('main')) {
-        setBranch('main')
-      } else if (branchNames.includes('master')) {
-        setBranch('master')
-      } else {
-        setBranch(branchNames[0])
-      }
+      const names = (await fetchBranches(repoUrl)).branches || []
+      if (names.length === 0) throw new Error('This repository has no branches.')
+      setBranches(names)
+      setBranch(names.includes('main') ? 'main' : names.includes('master') ? 'master' : names[0])
     } catch (err) {
       setBranchError(err.message)
       setBranches([])
@@ -141,6 +230,7 @@ function App() {
     setScan(null)
     setResult(null)
     setScanId(null)
+    setView('scan')
 
     const formData = new FormData()
     formData.append('repo_type', repoType)
@@ -168,271 +258,200 @@ function App() {
   const busy = submitting || scanning
 
   return (
-    <div>
-      {/* Header */}
-      <header className="header">
-        <div className="brand-badge">
-          <Shield size={14} />
-          <span>TraceLock Security</span>
-        </div>
-        <h1 className="brand-title">
-          Vulnerability Reachability Analyzer
-        </h1>
-        <p className="brand-subtitle">
-          Submit a Python project to see whether its code can actually reach the vulnerable functions in its dependencies.
-        </p>
+    <div className="app">
+      <header className="topbar">
+        <a className="wordmark" href="/" aria-label="TraceLock home">
+          <Mark />
+          <span>TraceLock</span>
+        </a>
+        <nav className="nav" aria-label="Main">
+          <button type="button" className={view === 'scan' ? 'active' : ''} onClick={() => setView('scan')}>
+            Scan
+          </button>
+          <button
+            type="button"
+            className={view === 'history' ? 'active' : ''}
+            onClick={() => {
+              setView('history')
+              refreshHistory()
+            }}
+          >
+            History
+            {history.length > 0 && <span className="nav-count">{history.length}</span>}
+          </button>
+        </nav>
       </header>
 
-      {/* Main Form Card */}
-      <div className="card">
-        {/* Source Switcher */}
-        <div className="source-tabs">
-          <button
-            type="button"
-            className={`source-tab-btn ${repoType === 'github' ? 'active' : ''}`}
-            onClick={() => setRepoType('github')}
-          >
-            <GithubIcon size={16} />
-            GitHub
-          </button>
-          <button
-            type="button"
-            className={`source-tab-btn ${repoType === 'upload' ? 'active' : ''}`}
-            onClick={() => setRepoType('upload')}
-          >
-            <FolderArchive size={16} />
-            Upload .zip
-          </button>
-          <button
-            type="button"
-            className={`source-tab-btn ${repoType === 'local' ? 'active' : ''}`}
-            onClick={() => setRepoType('local')}
-          >
-            <FolderOpen size={16} />
-            Local folder
-          </button>
-        </div>
+      <main className="page">
+        {view === 'history' ? (
+          <History history={history} scanId={scanId} onRefresh={refreshHistory} />
+        ) : (
+          <>
+            <section className={`composer ${result || scanning ? 'compact' : ''}`}>
+              {!result && !scanning && (
+                <>
+                  <h1>Which vulnerabilities can your code actually reach?</h1>
+                  <p className="lede">
+                    TraceLock reads your Python project and its dependencies' source, then follows the calls from
+                    your code to each known vulnerable function. Nothing you submit is executed.
+                  </p>
+                </>
+              )}
 
-        <form onSubmit={handleSubmit}>
-          {repoType === 'github' && (
-            <>
-              {/* GitHub URL Input */}
-              <div className="form-group">
-                <label className="form-label">GitHub Repository URL</label>
-                <div className="input-with-action">
-                  <div className="input-wrapper" style={{ flex: 1 }}>
-                    <span className="input-icon">
-                      <GithubIcon size={16} />
-                    </span>
-                    <input
-                      type="text"
-                      required
-                      className="text-input"
-                      placeholder="https://github.com/owner/repo"
-                      value={repoUrl}
-                      onChange={(e) => {
-                        setRepoUrl(e.target.value)
-                        setBranches([])
-                      }}
-                    />
-                  </div>
+              <form className="scanbar" onSubmit={handleSubmit}>
+                <div className="segmented" role="tablist" aria-label="Project source">
+                  {SOURCES.map((s) => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={repoType === s.key}
+                      className={repoType === s.key ? 'active' : ''}
+                      onClick={() => setRepoType(s.key)}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="scanbar-row">
+                  {repoType === 'github' && (
+                    <>
+                      <label className="field grow">
+                        <span className="field-label">Repository URL</span>
+                        <input
+                          type="url"
+                          required
+                          placeholder="https://github.com/owner/repo"
+                          value={repoUrl}
+                          onChange={(e) => {
+                            setRepoUrl(e.target.value)
+                            setBranches([])
+                          }}
+                        />
+                      </label>
+                      <label className="field branch">
+                        <span className="field-label">Branch or commit</span>
+                        <span className="with-action">
+                          {branches.length > 0 ? (
+                            <select value={branch} onChange={(e) => setBranch(e.target.value)}>
+                              {branches.map((b) => (
+                                <option key={b} value={b}>
+                                  {b}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              required
+                              value={branch}
+                              onChange={(e) => setBranch(e.target.value)}
+                              placeholder="main"
+                            />
+                          )}
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={handleFetchBranches}
+                            disabled={fetchingBranches || !repoUrl}
+                            title="Load branches from GitHub"
+                            aria-label="Load branches from GitHub"
+                          >
+                            {fetchingBranches ? <Loader2 size={15} className="spin" /> : <GitBranch size={15} />}
+                          </button>
+                        </span>
+                      </label>
+                    </>
+                  )}
+
+                  {repoType === 'upload' && (
+                    <div className="field grow">
+                      <span className="field-label">Project archive (.zip, up to 50 MB)</span>
+                      <button type="button" className="filepick" onClick={() => fileInputRef.current?.click()}>
+                        <Upload size={15} />
+                        {repoFile ? (
+                          <span>
+                            <strong>{repoFile.name}</strong>{' '}
+                            <span className="muted">{(repoFile.size / (1024 * 1024)).toFixed(1)} MB, click to replace</span>
+                          </span>
+                        ) : (
+                          <span className="muted">Choose a .zip of the project</span>
+                        )}
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        className="visually-hidden"
+                        type="file"
+                        accept=".zip"
+                        tabIndex={-1}
+                        onChange={(e) => setRepoFile(e.target.files[0] || null)}
+                      />
+                    </div>
+                  )}
+
+                  {repoType === 'local' && (
+                    <label className="field grow">
+                      <span className="field-label">Absolute path on the server</span>
+                      <span className="with-icon">
+                        <FolderOpen size={15} />
+                        <input
+                          type="text"
+                          required
+                          placeholder="/path/to/project"
+                          value={localPath}
+                          onChange={(e) => setLocalPath(e.target.value)}
+                        />
+                      </span>
+                    </label>
+                  )}
+
                   <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={handleFetchBranches}
-                    disabled={fetchingBranches || !repoUrl}
+                    type="submit"
+                    className="btn btn-primary scan-btn"
+                    disabled={busy || (repoType === 'upload' && !repoFile)}
                   >
-                    {fetchingBranches ? (
+                    {busy ? (
                       <>
-                        <Loader2 size={14} className="spin" />
-                        Fetching
+                        <Loader2 size={16} className="spin" /> Scanning
                       </>
                     ) : (
-                      <>
-                        <RefreshCw size={14} />
-                        Fetch Branches
-                      </>
+                      'Scan project'
                     )}
                   </button>
                 </div>
+
                 {branchError && (
-                  <div className="helper-error">
-                    <AlertCircle size={13} />
-                    <span>{branchError}</span>
-                  </div>
+                  <p className="field-error">
+                    <AlertCircle size={14} /> {branchError}
+                  </p>
                 )}
-              </div>
-
-              {/* Branch / Commit Selection */}
-              <div className="form-group">
-                <label className="form-label">Target Branch / Commit</label>
-                <div className="input-wrapper">
-                  <GitBranch size={16} className="input-icon" />
-                  {branches.length > 0 ? (
-                    <select
-                      className="select-input"
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                    >
-                      {branches.map((b) => (
-                        <option key={b} value={b}>
-                          {b}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      required
-                      className="text-input"
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                      placeholder="e.g. main, master, or commit hash"
-                    />
-                  )}
-                </div>
-                {branches.length > 0 && (
-                  <div className="branch-counter">
-                    {branches.length} branches discovered
-                  </div>
+                {repoType === 'local' && (
+                  <p className="field-hint">
+                    Server folders are off unless the API runs with <code>TRACELOCK_ALLOW_LOCAL_PATHS=1</code>.
+                  </p>
                 )}
-              </div>
-            </>
-          )}
+              </form>
+            </section>
 
-          {repoType === 'upload' && (
-            /* File Upload Dropzone */
-            <div className="form-group">
-              <label className="form-label">Project Archive</label>
-              <div
-                className="dropzone"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <UploadCloud size={32} className="dropzone-icon" />
-                <div className="dropzone-text">
-                  {repoFile ? 'Click to replace file' : 'Click to select project archive'}
-                </div>
-                <div className="dropzone-subtext">
-                  .zip up to 50 MB
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  required={!repoFile}
-                  accept=".zip"
-                  onChange={(e) => setRepoFile(e.target.files[0])}
-                />
-              </div>
-              {repoFile && (
-                <div className="selected-file-badge">
-                  <FileCode2 size={16} />
-                  <span>{repoFile.name}</span>
-                  <span style={{ color: '#64748b', fontSize: '11px' }}>
-                    ({(repoFile.size / (1024 * 1024)).toFixed(2)} MB)
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+            {scanning && <Progress scan={scan} />}
 
-          {repoType === 'local' && (
-            <div className="form-group">
-              <label className="form-label">Folder on the server</label>
-              <div className="input-wrapper">
-                <FolderOpen size={16} className="input-icon" />
-                <input
-                  type="text"
-                  required
-                  className="text-input"
-                  placeholder="/absolute/path/to/project"
-                  value={localPath}
-                  onChange={(e) => setLocalPath(e.target.value)}
-                />
+            {error && (
+              <div className="notice notice-error" role="alert">
+                <AlertCircle size={18} />
+                <div>
+                  <strong>The scan stopped.</strong>
+                  <pre>{error}</pre>
+                </div>
               </div>
-              <div className="branch-counter">
-                The API must run with TRACELOCK_ALLOW_LOCAL_PATHS=1
-              </div>
-            </div>
-          )}
-
-          {/* Submit Button */}
-          <button type="submit" className="btn-submit" disabled={busy}>
-            {busy ? (
-              <>
-                <Loader2 size={18} className="spin" />
-                <span>Running Reachability Analysis...</span>
-              </>
-            ) : (
-              <>
-                <span>Start Full Analysis</span>
-                <ArrowRight size={17} />
-              </>
             )}
-          </button>
-        </form>
-      </div>
 
-      {/* Progress */}
-      {scanning && (
-        <div className="progress-card">
-          <div className="progress-head">
-            <span>{STAGE_LABELS[scan?.stage] || 'Starting scan'}</span>
-            <span className="progress-pct">{scan?.progress ?? 0}%</span>
-          </div>
-          <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${scan?.progress ?? 0}%` }} />
-          </div>
-        </div>
-      )}
+            {result && <Results scanId={scanId} result={result} project={projectLabel(scan)} />}
 
-      {/* Error Output */}
-      {error && (
-        <div className="result-card error">
-          <div className="result-header error">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <AlertCircle size={16} />
-              <span>Analysis Failed</span>
-            </div>
-          </div>
-          <div className="result-body">
-            <pre>{error}</pre>
-          </div>
-        </div>
-      )}
-
-      {result && <Results scanId={scanId} result={result} />}
-
-      {/* Recent scans */}
-      {history.length > 0 && (
-        <div className="card history-card">
-          <div className="history-head">
-            <span>Recent scans</span>
-            <button type="button" className="btn-secondary" onClick={refreshHistory}>
-              <RefreshCw size={14} /> Refresh
-            </button>
-          </div>
-          <table className="history-table">
-            <thead>
-              <tr><th>When</th><th>Source</th><th>Ref</th><th>Status</th><th>Reachable</th><th>Not reachable</th><th>Uncertain</th></tr>
-            </thead>
-            <tbody>
-              {history.map((h) => (
-                <tr key={h.scan_id} className={h.scan_id === scanId ? 'current' : ''}>
-                  <td>{h.created_at ? new Date(h.created_at).toLocaleString() : ''}</td>
-                  <td className="mono" title={h.repository_url}>
-                    <a href={`?scan=${h.scan_id}`}>{(h.repository_url || '').replace('https://github.com/', '').slice(0, 48) || h.source_type}</a>
-                  </td>
-                  <td className="mono">{h.ref || ''}</td>
-                  <td><span className={`status-pill ${h.status}`}>{h.status}</span></td>
-                  <td className="num reachable">{h.counts ? h.counts.reachable : '–'}</td>
-                  <td className="num not-reachable">{h.counts ? h.counts.not_reachable : '–'}</td>
-                  <td className="num uncertain">{h.counts ? h.counts.uncertain : '–'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            {!result && !scanning && !error && <Intro />}
+          </>
+        )}
+      </main>
     </div>
   )
 }

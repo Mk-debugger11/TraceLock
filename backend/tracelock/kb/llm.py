@@ -7,17 +7,15 @@ never become a target. The LLM never decides a verdict.
 Prompt = advisory summary + details + fix-commit hunks + the functions the fix touched + up to 400
 public dotted names from the package source (_symbols_in). Answer format:
     {"entry_api": [...], "vulnerable_funcs": [...], "reasoning": "..."}
-Providers (plain urllib, no SDK): a local Ollama at OLLAMA_HOST (default http://localhost:11434) when
-TRACELOCK_LLM=ollama (open-weight models, nothing leaves the machine); any OpenAI-compatible server via
-OPENAI_API_KEY + OPENAI_BASE_URL (vLLM, Groq, Together, OpenRouter serving Llama/Qwen/...); or ANTHROPIC_API_KEY.
-Model names: TRACELOCK_LLM_MODEL (defaults below).
+Provider: tracelock.llm (local Ollama by default; a cloud API only when TRACELOCK_LLM_PROVIDER names
+it explicitly, never because a key is set). See tracelock/llm/settings.py.
 
 Cache: tracelock/data/llm_cache/<advisory_id>.json (committed) and .tracelock/cache/llm/ (local).
 The cache is read first, so demos never wait on the network; it also records which proposals
 passed verification against that exact package version, so --offline runs without the source
 can reuse them (cached_verified).
 
-    python -m tracelock.kb.llm --seed [CVE ...]            # needs a key: curated seed advisories
+    python -m tracelock.kb.llm --seed [CVE ...]            # needs TRACELOCK_LLM_ENABLED=true
     python -m tracelock.kb.llm --seed --fixture ../benchmark/real_flask_app   # every advisory of a project
         Downloads the pinned wheels to .tracelock/cache/src (unzipped, never executed), writes
         data/llm_cache/<id>.json and copies the fix-commit analysis into data/fixes/.
@@ -28,10 +26,8 @@ import ast
 import hashlib
 import io
 import json
-import os
 import re
 import sys
-import time
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
@@ -47,7 +43,6 @@ SRC_CACHE = Path(".tracelock") / "cache" / "src"
 MAX_SYMBOLS = 400
 MAX_DETAILS = 2500
 MAX_HUNK_CHARS = 6000
-DEFAULT_MODELS = {"anthropic": "claude-sonnet-5-5", "openai": "gpt-4o-mini", "ollama": "qwen2.5-coder:7b"}
 SYSTEM = ("You map security advisories for Python packages to the public API an application would call to "
           "reach the vulnerable code. Answer with one JSON object and nothing else.")
 
@@ -143,49 +138,36 @@ def build_prompt(adv: Advisory, dep: Dependency, spec: VulnSpec, symbols: list[s
 
 # --- providers ------------------------------------------------------------------------------
 
-def _post_json(url: str, body: dict, headers: dict, timeout: int = 90) -> dict:
-    last: Exception = RuntimeError("no attempt")
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
-                                         headers={"Content-Type": "application/json", **headers})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except Exception as exc:
-            last = exc
-            if attempt < 2:
-                time.sleep(1.0 * (2 ** attempt))
-    raise last
+LEGACY_SCHEMA = {"type": "object", "properties": {"entry_api": {"type": "array", "items": {"type": "string"}},
+                                                  "vulnerable_funcs": {"type": "array", "items": {"type": "string"}},
+                                                  "reasoning": {"type": "string"}}, "required": ["entry_api"]}
 
 
 def _call_llm(system: str, prompt: str) -> tuple[str, str, str]:
+    """One call through the configured provider. A provider is used only when TRACELOCK_LLM_ENABLED and
+    TRACELOCK_LLM_PROVIDER select it: an API key in the environment never does."""
     if _transport_override is not None:
         return _transport_override(system, prompt)
-    model = os.environ.get("TRACELOCK_LLM_MODEL")
-    if os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("TRACELOCK_LLM", "anthropic") == "anthropic":
-        model = model or DEFAULT_MODELS["anthropic"]
-        data = _post_json("https://api.anthropic.com/v1/messages",
-                          {"model": model, "max_tokens": 1500, "temperature": 0, "system": system,
-                           "messages": [{"role": "user", "content": prompt}]},
-                          {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"})
-        text = "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
-        return "anthropic", model, text
-    if os.environ.get("OPENAI_API_KEY") and os.environ.get("TRACELOCK_LLM", "openai") in ("openai", "anthropic"):
-        model = model or DEFAULT_MODELS["openai"]
-        base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        data = _post_json(f"{base}/chat/completions",
-                          {"model": model, "temperature": 0, "response_format": {"type": "json_object"},
-                           "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]},
-                          {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"})
-        return "openai", model, data["choices"][0]["message"]["content"]
-    if os.environ.get("TRACELOCK_LLM") == "ollama":
-        model = model or DEFAULT_MODELS["ollama"]
-        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-        data = _post_json(f"{host}/api/chat", {"model": model, "stream": False, "format": "json",
-                                               "messages": [{"role": "system", "content": system},
-                                                            {"role": "user", "content": prompt}]}, {})
-        return "ollama", model, data.get("message", {}).get("content", "")
-    raise RuntimeError("no LLM configured (TRACELOCK_LLM=ollama for a local open model, or OPENAI_API_KEY [+ OPENAI_BASE_URL], or ANTHROPIC_API_KEY)")
+    from .. import llm as llm_pkg
+    provider = llm_pkg.get_provider()
+    if provider is None:
+        raise RuntimeError("no LLM configured (set TRACELOCK_LLM_ENABLED=true and TRACELOCK_LLM_PROVIDER=ollama)")
+    provider.check_available()
+    with llm_pkg.inference_slot():
+        chat = provider.chat_json(system, prompt, LEGACY_SCHEMA)
+    return chat.provider, chat.model, chat.text
+
+
+def verify_proposals(lib_src: Path, dep: Dependency, spec: VulnSpec, proposed: list[str]) -> list[str]:
+    """Keep a proposed name only if it is defined in the pinned source (exactly or by explicit re-export)
+    and a library call path leads from it to the fix's functions."""
+    from .. import lib_graph
+    from .verify import verify_python_entry
+    try:
+        exposure = lib_graph.exposure_set(lib_src, spec)
+    except Exception:
+        return []
+    return [n for n in proposed if verify_python_entry(n, "python_public_api", [], lib_src, exposure).accepted]
 
 
 def parse_response(text: str) -> dict:

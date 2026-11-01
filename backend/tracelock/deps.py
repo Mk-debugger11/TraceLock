@@ -294,6 +294,15 @@ def _known_requires(dep: Dependency) -> list[str]:
     return list(versions[newest])
 
 
+def requires_for_name(name: str) -> Optional[list[str]]:
+    """Requirements of an unpinned package: the union over every version in the metadata snapshot
+    (over-approximate on purpose). None when the snapshot does not know the package at all."""
+    versions = _requires_table().get(normalize_name(name))
+    if not versions:
+        return None
+    return sorted({r for reqs in versions.values() for r in reqs})
+
+
 # --- entry point -----------------------------------------------------------------------------
 
 def scan_dependencies(root: Path) -> list[Dependency]:
