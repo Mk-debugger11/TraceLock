@@ -292,7 +292,20 @@ def _physical(file: str, line: int) -> dict:
     return {"physicalLocation": location}
 
 
-def _sarif_result(f: Finding, rule_index: int) -> dict:
+MANIFESTS = ("requirements.txt", "pyproject.toml", "poetry.lock", "uv.lock", "Pipfile.lock", "Pipfile", "setup.cfg", "setup.py")
+
+
+def _manifest(root: str) -> Optional[str]:
+    """A file in the scanned project to anchor findings that have no source line (GitHub requires a location)."""
+    base = Path(root)
+    for name in MANIFESTS:
+        if (base / name).is_file():
+            return name
+    found = sorted(base.rglob("requirements*.txt")) if base.is_dir() else []
+    return found[0].relative_to(base).as_posix() if found else None
+
+
+def _sarif_result(f: Finding, rule_index: int, fallback: Optional[str] = None) -> dict:
     adv, dep = f.advisory, f.dependency
     fix = f" Fixed in {adv.fixed_in}." if adv.fixed_in else ""
     result = {"ruleId": adv.id, "ruleIndex": rule_index}
@@ -300,14 +313,22 @@ def _sarif_result(f: Finding, rule_index: int) -> dict:
         site = _call_site(f.path)
         chain = " -> ".join(s.qualname for s in f.path)
         result.update(level="error", message={"text": f"{dep.name} {dep.version}: {adv.id} is reachable via {chain}.{fix}"})
-        if site:
-            result["locations"] = [_physical(site.file, site.line)]
+        anchor = (site.file, site.line) if site else ((fallback, 1) if fallback else None)
+        if anchor:
+            result["locations"] = [_physical(*anchor)]
         steps = []
+        last = anchor
         for step in f.path:
-            location = _physical(step.file, step.line) if step.file else {}
+            # GitHub code scanning needs a physical location on every step: steps inside a library (no file in
+            # the project) are shown at the app call site that reaches them.
+            if step.file:
+                last = (step.file, step.line)
+            if last is None:
+                continue
+            location = _physical(*last)
             location["message"] = {"text": step.qualname if step.file else f"{step.qualname} (vulnerable)"}
             steps.append({"location": location})
-        if steps:
+        if steps and anchor:
             result["codeFlows"] = [{"threadFlows": [{"locations": steps}]}]
     else:
         reason = next((r for r in f.reasons if r.file), f.reasons[0] if f.reasons else None)
@@ -316,7 +337,9 @@ def _sarif_result(f: Finding, rule_index: int) -> dict:
             detail = f" Saw: {reason.detail.rstrip('.')}." + (f" Check: {reason.check.rstrip('.')}." if reason.check else "")
         result.update(level="warning", message={"text": f"{dep.name} {dep.version}: {adv.id} may be reachable.{detail}{fix}"})
         if reason and reason.file:
-            result["locations"] = [_physical(reason.file, reason.line or 0)]
+            result["locations"] = [_physical(reason.file, reason.line or 1)]
+        elif fallback:
+            result["locations"] = [_physical(fallback, 1)]
     return result
 
 
@@ -341,6 +364,7 @@ def to_sarif(result: ScanResult) -> str:
         rules.append(rule)
 
     findings = sorted(result.findings, key=lambda x: (ORDER.get(x.verdict, 9), x.dependency.name, x.advisory.id))
+    fallback = _manifest(result.root)
     log = {
         "$schema": SARIF_SCHEMA,
         "version": "2.1.0",
@@ -352,7 +376,8 @@ def to_sarif(result: ScanResult) -> str:
                 "rules": rules,
             }},
             "originalUriBaseIds": {"%SRCROOT%": {"uri": f"{_file_uri(result.root)}/"}},
-            "results": [_sarif_result(f, index[f.advisory.id]) for f in findings if f.verdict in (REACHABLE, UNCERTAIN)],
+            "results": [r for r in (_sarif_result(f, index[f.advisory.id], fallback)
+                                    for f in findings if f.verdict in (REACHABLE, UNCERTAIN)) if r.get("locations")],
         }],
     }
     return json.dumps(log, indent=2)
