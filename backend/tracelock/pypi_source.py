@@ -80,6 +80,65 @@ def fetch(dep: Dependency, offline: bool = False) -> Optional[Path]:
     return target.resolve()
 
 
+CACHE_NATIVE = Path(".tracelock") / "cache" / "native-src"
+# What native-extension analysis reads from an sdist; everything else (test images, docs) is skipped.
+NATIVE_KEEP = (".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".rs", ".py", ".pyx", ".pxd", ".pyi", ".toml")
+
+
+def fetch_sdist(dep: Dependency, offline: bool = False) -> Optional[Path]:
+    """The unpacked sdist of dep==version, source files only, for C / Rust extension analysis.
+
+    Wheels ship compiled .so/.pyd files, so the pinned version's native source only exists in the
+    sdist. It is downloaded from PyPI with its sha256 checked, unpacked with the same path/size
+    checks as fetch(), and never built, imported or executed. None when offline or unavailable."""
+    if not (_SAFE_NAME.fullmatch(dep.name) and _SAFE_VERSION.fullmatch(dep.version)):
+        return None
+    target = CACHE_NATIVE / f"{dep.name}-{dep.version}"
+    if not target.is_dir():
+        if offline:
+            return None
+        try:
+            archive = _pypi_sdist(dep)
+            if archive is None:
+                return None
+            CACHE_NATIVE.mkdir(parents=True, exist_ok=True)
+            work = Path(tempfile.mkdtemp(prefix=f".tmp-{dep.name}-", dir=CACHE_NATIVE))
+            try:
+                staged = work / "staged"
+                (_extract_zip if archive.name.endswith(".zip") else _extract_tar)(archive, staged, keep=NATIVE_KEEP)
+                try:
+                    staged.rename(target)
+                except OSError:
+                    if not target.is_dir():
+                        raise
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+                archive.unlink(missing_ok=True)
+        except (ArchiveError, OSError, zipfile.BadZipFile, tarfile.TarError) as exc:
+            logger.warning("could not get sdist for %s==%s: %s", dep.name, dep.version, exc)
+            return None
+    entries = [p for p in target.iterdir()]
+    return (entries[0] if len(entries) == 1 and entries[0].is_dir() else target).resolve()
+
+
+def _pypi_sdist(dep: Dependency) -> Optional[Path]:
+    try:
+        with urllib.request.urlopen(PYPI_JSON.format(name=dep.name, version=dep.version), timeout=HTTP_TIMEOUT) as resp:
+            files = json.load(resp).get("urls", [])
+    except (OSError, ValueError):
+        return None
+    sdists = [f for f in files if f.get("packagetype") == "sdist" and f.get("filename", "").endswith((".tar.gz", ".zip"))]
+    if not sdists:
+        return None
+    entry = sdists[0]
+    dest = CACHE_DL / f"{dep.name}-{dep.version}-sdist"
+    shutil.rmtree(dest, ignore_errors=True)
+    dest.mkdir(parents=True)
+    path = dest / PurePosixPath(entry["filename"]).name
+    _http_download(entry["url"], path, entry.get("digests", {}).get("sha256"))
+    return path
+
+
 def canonical(name: str) -> str:
     """PEP 503 normalised name, matching Dependency.name."""
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -218,7 +277,7 @@ def _copy_capped(src: BinaryIO, out: BinaryIO, total: int) -> int:
     return total
 
 
-def _extract_zip(archive: Path, dest: Path) -> None:
+def _extract_zip(archive: Path, dest: Path, keep: Optional[tuple] = None) -> None:
     dest.mkdir(parents=True)
     total = 0
     with zipfile.ZipFile(archive) as zf:
@@ -229,6 +288,8 @@ def _extract_zip(archive: Path, dest: Path) -> None:
             relative = _safe_relpath(member.filename)
             if relative is None or stat.S_ISLNK(member.external_attr >> 16):
                 continue
+            if keep and not member.is_dir() and not relative.name.endswith(keep):
+                continue
             out = dest.joinpath(*relative.parts)
             if member.is_dir():
                 out.mkdir(parents=True, exist_ok=True)
@@ -238,7 +299,7 @@ def _extract_zip(archive: Path, dest: Path) -> None:
                 total = _copy_capped(src, fh, total)
 
 
-def _extract_tar(archive: Path, dest: Path) -> None:
+def _extract_tar(archive: Path, dest: Path, keep: Optional[tuple] = None) -> None:
     dest.mkdir(parents=True)
     total = count = 0
     with tarfile.open(archive, "r:*") as tf:
@@ -254,6 +315,8 @@ def _extract_tar(archive: Path, dest: Path) -> None:
                 out.mkdir(parents=True, exist_ok=True)
                 continue
             if not member.isfile():  # symlinks, hard links, devices and fifos are never created
+                continue
+            if keep and not relative.name.endswith(keep):
                 continue
             src = tf.extractfile(member)
             if src is None:
