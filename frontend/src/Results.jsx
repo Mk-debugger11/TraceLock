@@ -16,6 +16,7 @@ const TIERS = {
   ecosystem_specific: 'advisory import data',
   fix_commit: 'the fix commit',
   llm_verified: 'LLM proposal, verified against source',
+  native_mapped: 'the native (C/Rust) fix, mapped to its Python wrappers',
   none: 'no function data',
 }
 
@@ -370,6 +371,82 @@ function Why({ finding }) {
   )
 }
 
+const LLM_STATUS = {
+  used: 'ran for this finding',
+  cached: 'answer reused from cache',
+  not_needed: 'not needed: deterministic analysis mapped the code',
+  disabled: 'off (TRACELOCK_LLM_ENABLED is not set)',
+  unavailable: 'unavailable',
+  model_missing: 'model not pulled',
+  timeout: 'timed out',
+  bad_response: 'reply rejected (invalid output)',
+  http_error: 'server error',
+  skipped_budget: 'skipped: scan inference budget used up',
+}
+
+/* How function data was found: deterministic native mapping and, where it left gaps, the local LLM.
+   Model output is shown only as verified / rejected candidates, never as evidence on its own. */
+function Discovery({ discovery, verdict }) {
+  if (!discovery || (!discovery.native && !discovery.llm)) return null
+  const llm = discovery.llm || {}
+  const nat = discovery.native || {}
+  const checks = discovery.checks || {}
+  const failed = ['unavailable', 'model_missing', 'timeout', 'http_error', 'bad_response'].includes(llm.status)
+  const wrappers = nat.python_wrappers || []
+  return (
+    <section className="discovery">
+      <h3>Function discovery</h3>
+      {failed ? (
+        <p className="discovery-warn">
+          Local LLM {LLM_STATUS[llm.status]}. Deterministic analysis completed.
+          {verdict === 'UNCERTAIN' ? ' The finding remains UNCERTAIN.' : ''}
+        </p>
+      ) : null}
+      <dl className="discovery-facts">
+        <div><dt>Method</dt><dd>{discovery.method === 'deterministic+llm' ? 'deterministic + local LLM' : 'deterministic'}</dd></div>
+        {llm.provider && (
+          <div>
+            <dt>Local LLM</dt>
+            <dd>
+              {llm.provider === 'ollama' ? 'Ollama' : llm.provider}, <code>{llm.model}</code>
+              {llm.execution === 'docker' ? ', Docker container' : ''}: {LLM_STATUS[llm.status] || llm.status}
+              {llm.latency_ms ? ` (${(llm.latency_ms / 1000).toFixed(1)} s)` : ''}
+            </dd>
+          </div>
+        )}
+        {llm.candidates_suggested > 0 && (
+          <div>
+            <dt>Candidates</dt>
+            <dd>{llm.candidates_suggested} suggested, {llm.candidates_verified} verified, {llm.candidates_rejected} rejected</dd>
+          </div>
+        )}
+        {checks.source_verification && <div><dt>Source verification</dt><dd>{checks.source_verification}</dd></div>}
+        {checks.package_version_verification && <div><dt>Pinned version check</dt><dd>{checks.package_version_verification}</dd></div>}
+        {checks.native_api_mapping && <div><dt>Native API mapping</dt><dd>{checks.native_api_mapping}</dd></div>}
+      </dl>
+      {(nat.changed_functions || []).length > 0 && (
+        <p className="discovery-line">
+          Fix changes native <code>{nat.changed_functions.map((c) => c.name).slice(0, 4).join(', ')}</code>
+          {wrappers.length > 0 && (
+            <>, reached from Python by <code>{wrappers.slice(0, 3).map((w) => w.symbol).join(', ')}</code>
+              {wrappers.length > 3 ? ` and ${wrappers.length - 3} more` : ''}</>
+          )}
+        </p>
+      )}
+      {(llm.candidates || []).length > 0 && (
+        <ul className="discovery-candidates">
+          {llm.candidates.map((c, i) => (
+            <li key={i} className={c.accepted ? 'ok' : 'rejected'}>
+              <code>{c.resolved || c.symbol}</code> {c.accepted ? 'verified' : 'rejected'}
+              <span>{c.reason}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function Detail({ finding, onBack }) {
   const { advisory, dependency, spec, verdict } = finding
   const v = VERDICTS[verdict] || VERDICTS.UNCERTAIN
@@ -443,6 +520,7 @@ function Detail({ finding, onBack }) {
       {verdict === 'NOT_REACHABLE' && <Checklist checklist={finding.checklist} dependency={dependency} />}
       {finding.reasons.length > 0 && <Reasons reasons={finding.reasons} verdict={verdict} />}
 
+      <Discovery discovery={spec.discovery} verdict={verdict} />
       <Why finding={finding} />
 
       {(fixUrl || advisory.fixed_in) && (

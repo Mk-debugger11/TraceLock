@@ -5,7 +5,7 @@ One JSON file per advisory id, written by `tracelock.kb.llm`: the raw model repl
 (`verified`, `verified_version`, `rejected`). `kb.resolve()` reads this before calling any model and,
 offline without the package source, reuses only `verified` names for the same version.
 
-Fill it for the seed advisories (needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or `TRACELOCK_LLM=ollama`):
+Fill it for the seed advisories (needs `TRACELOCK_LLM_ENABLED=true`; provider from `TRACELOCK_LLM_PROVIDER`, default local Ollama):
 
     cd backend && python -m tracelock.kb.llm --seed            # all curated advisories
     cd backend && python -m tracelock.kb.llm --seed CVE-2024-47081
@@ -14,3 +14,7 @@ Fill it for the seed advisories (needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, 
 The seed run downloads each pinned wheel to `.tracelock/cache/src/` (unzipped, never executed) and
 prints how many LLM proposals overlap the hand-curated `entry_api` (the accuracy number for the pitch).
 Commit the resulting `*.json` files so the demo never waits on the network.
+
+Function-discovery answers (native mappings, pinned equivalents) are cached separately in
+`.tracelock/cache/llm/discovery/<key>.json`, keyed by package, version, advisory, fix commit, source hash,
+model and prompt schema version; `discovery/` here may hold committed copies for offline demos.

@@ -157,10 +157,28 @@ resolves toward UNCERTAIN, never toward NOT_REACHABLE.
 | `curated` | hand-verified entry in `kb/curated.json` (functions, public entry API, safe-usage rules, fix commit) | 0.95 |
 | `ecosystem_specific` | PyPA's `imports` field in the OSV record, when present (~5% of PyPI advisories) | 0.9 |
 | `fix_commit` | the advisory's fix commit diff, each hunk mapped to its enclosing function by parsing the pre-fix file (hunk headers are not trusted) | 0.7 |
-| `llm_verified` | an LLM proposes public entry points from the advisory + diff; every name is checked against the installed library source before use. The LLM never decides a verdict | 0.6 |
-| `none` | nothing usable: the verdict can only be UNCERTAIN | 0 |
+| `llm_verified` | an LLM proposes public entry points from the advisory + diff; a name is kept only if it is defined in the pinned version and a library call path leads from it to the fixed code. The LLM never decides a verdict | 0.6 |
+| `native_mapped` | the fix changes C or Rust: `native.py` parses the pinned version's sdist (`PyMethodDef`, `PyGetSetDef`, `tp_methods`, `PyType_Slot`, PyO3 `#[pyfunction]`/`#[pymethods]`/`#[pyclass]`), walks the native call graph up to registered functions and finds the Python wrappers that call them. Any gap (function pointer, dynamic `getattr`, ambiguous name, code missing from the pinned version) keeps NOT_REACHABLE off | 0.5-0.6 |
+| `none` | nothing usable: the verdict can only be UNCERTAIN, unless the package provably never loads (below) | 0 |
 
 Tiers merge rather than replace: a curated safe-usage rule still applies when the fix-commit tier adds functions.
+
+**Version awareness.** A function the fix changes but the pinned version does not define is replaced only by
+a pinned function whose body contains the hunk's pre-fix lines; otherwise it is reported, not guessed.
+
+**Unused packages.** Without function data a package is NOT_REACHABLE only if no app module imports it, no
+package in the full requirement graph needs it (unpinned intermediates use `data/pypi_requires.json`),
+no imported library's own source imports it, and the app has no dynamic loading or string naming it.
+
+**Local LLM (optional).** Where deterministic analysis leaves a gap, a local Qwen2.5-Coder model running in
+Docker through Ollama can propose candidates; `kb/verify.py` accepts or rejects each one. Setup, networking
+and troubleshooting: [docs/LOCAL_LLM.md](docs/LOCAL_LLM.md). Quick start:
+
+```bash
+docker compose up -d ollama
+docker compose exec ollama ollama pull qwen2.5-coder:3b
+cd backend && TRACELOCK_LLM_ENABLED=true venv/bin/python -m tracelock.cli scan ../benchmark/real_flask_app
+```
 
 ### Library-side analysis (exposure set)
 
