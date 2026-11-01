@@ -56,6 +56,8 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
     app = app_graph.build(root, ignore_paths=list(cfg.get("ignore_paths", []) or []))
     result.warnings.extend(app.warnings)
 
+    from .kb.discovery import LLMSession
+    session = LLMSession()   # local LLM assistance (disabled unless TRACELOCK_LLM_ENABLED=true); never decides a verdict
     source_cache: dict[str, Optional[Path]] = {}
 
     def source_for(d) -> Optional[Path]:
@@ -75,6 +77,18 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
         if dep.name in vulnerable_names or (unimported_vulnerable and app.imports_any(dep.import_names)):
             source_for(dep)
 
+    # Top-level modules each imported library's own source imports (optional imports are not in Requires-Dist);
+    # None when its source is unavailable. Read by the verdict engine's unused-package rule.
+    library_imports: dict[str, Optional[list]] = {}
+    if unimported_vulnerable:
+        for dep in dependencies:
+            if app.imports_any(dep.import_names):
+                src = source_cache.get(dep.name)
+                try:
+                    library_imports[dep.name] = sorted(lib_graph.load_model(src).imported_top_levels) if src is not None else None
+                except Exception:
+                    library_imports[dep.name] = None
+
     for dep in dependencies:
         advs = advisories.get(dep.name, [])
         if not advs:
@@ -86,8 +100,13 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
             if other.name != dep.name and dep.name in [r.lower() for r in other.requires] and app.imports_any(other.import_names)
         ]
         for adv in advs:
-            spec = kb.resolve(adv, dep, lib_src=lib_src, offline=offline)
+            spec = kb.resolve(adv, dep, lib_src=lib_src, offline=offline, session=session)
             exposure = lib_graph.exposure_set(lib_src, spec) if lib_src is not None and spec.vulnerable_funcs else lib_graph.ExposureSet()
+            # Native fixes: continue each library chain from the Python wrapper into the C/Rust code.
+            for name, chain in list(exposure.chains.items()):
+                tail = spec.discovery.get("chains", {}).get(chain[-1]) if chain else None
+                if tail:
+                    exposure.chains[name] = chain + tail
             # Two-level transitive: which public symbols of the importing package reach this package's entry API?
             for other in bridges:
                 other_src = source_for(other)
@@ -103,7 +122,8 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
                     result.warnings.append(f"{other.name}: bridge analysis failed ({exc})")
                     continue
                 exposure.merge_bridge(bridge, other.import_names, package=other.name)
-            finding = verdict.decide(app, dep, adv, spec, exposure, trace=trace, all_deps=dependencies)
+            finding = verdict.decide(app, dep, adv, spec, exposure, trace=trace, all_deps=dependencies,
+                                     library_imports=library_imports)
             accepted, warning = project_config.acceptance_for(cfg, [adv.id, *adv.aliases])
             if warning:
                 result.warnings.append(warning)
@@ -120,6 +140,10 @@ def scan(root: Path, offline: bool = False, trace: Optional[dict] = None, fetch_
         "advisories": sum(len(v) for v in advisories.values()),
     }
     result.stats["accepted"] = sum(1 for f in result.findings if f.accepted)
+    result.stats["llm"] = session.status()
+    if session.unavailable:
+        result.warnings.append(f"local LLM unavailable ({session.unavailable_kind}): {session.unavailable}; "
+                               "deterministic analysis completed and affected findings stay UNCERTAIN")
     if cfg.get("_file"):
         result.stats["config"] = cfg["_file"]
     if trace:

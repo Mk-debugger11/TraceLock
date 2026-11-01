@@ -19,6 +19,7 @@ TIER_CURATED = "curated"
 TIER_ECOSYSTEM = "ecosystem_specific"
 TIER_FIX_COMMIT = "fix_commit"
 TIER_LLM = "llm_verified"
+TIER_NATIVE = "native_mapped"     # C/Rust fix mapped to Python wrappers by native.py (deterministic)
 TIER_NONE = "none"
 
 
@@ -55,6 +56,9 @@ class VulnSpec:
     fix_commit: Optional[str] = None
     evidence_hunks: list[str] = field(default_factory=list)
     notes: str = ""
+    # How function data was discovered: {"method", "native": {...}, "llm": {provider, model, status, candidates...},
+    # "checks": {...}}. Informational only; the verdict engine reads nothing here except native "complete".
+    discovery: dict = field(default_factory=dict)
 
     def targets(self) -> set[str]:
         return set(self.vulnerable_funcs) | set(self.entry_api)
