@@ -40,7 +40,7 @@ jobs:
           tracelock scan benchmark/real_flask_app --offline \
             --json tracelock.json --vex tracelock.vex.json --sarif tracelock.sarif || true
       - name: Upload SARIF to GitHub code scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: tracelock.sarif
           category: tracelock

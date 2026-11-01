@@ -54,7 +54,8 @@ def test_sarif_results_and_code_flow(results):
     assert [s["location"]["message"]["text"] for s in steps] == [
         "app.main.main", "app.settings.load_settings", "app.settings._read", "yaml.full_load (vulnerable)"
     ]
-    assert "physicalLocation" not in steps[-1]["location"]
+    # the library step is pinned to the call site that reaches it (GitHub needs a location on every step)
+    assert steps[-1]["location"]["physicalLocation"] == first["locations"][0]["physicalLocation"]
 
 
 def test_sarif_omits_not_reachable_and_warns_on_uncertain(results):
@@ -130,3 +131,12 @@ def test_cli_writes_vex_and_sarif(tmp_path, capsys):
     assert code == 1  # a REACHABLE finding fails the build by default
     assert json.loads(vex.read_text())["statements"]
     assert json.loads(sarif.read_text())["runs"][0]["results"]
+
+
+def test_sarif_every_result_and_step_has_a_physical_location(results):
+    for result in results.values():
+        for r in json.loads(report.to_sarif(result))["runs"][0]["results"]:
+            assert r["locations"] and "physicalLocation" in r["locations"][0]
+            for flow in r.get("codeFlows", []):
+                for step in flow["threadFlows"][0]["locations"]:
+                    assert "physicalLocation" in step["location"]
