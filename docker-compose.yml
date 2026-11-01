@@ -5,12 +5,59 @@ services:
     environment:
       TRACELOCK_OFFLINE: "0"
       TRACELOCK_ALLOW_LOCAL_PATHS: "1"     # lets the UI scan folders mounted below
+      # Local LLM-assisted function discovery. The model only proposes candidate functions;
+      # deterministic code verifies them and the verdict engine decides. Set to "false" to turn it off.
+      TRACELOCK_LLM_ENABLED: "${TRACELOCK_LLM_ENABLED:-true}"
+      TRACELOCK_LLM_PROVIDER: ollama
+      # Inside the Compose network the Ollama container is reachable by its service name.
+      # (localhost here would mean the api container itself.)
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5-coder:3b}"
+      OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-120}"
     volumes:
       - ./projects:/projects:ro            # put projects to scan here; use /projects/<name> in the UI
       - tracelock-data:/app/backend/workspace
+      - tracelock-cache:/app/backend/.tracelock   # source, fix-commit and LLM caches survive rebuilds
+    depends_on:
+      ollama:
+        condition: service_started
+        required: false                    # the API still starts (deterministic only) without Ollama
+
   ui:
     build: { context: ., target: ui }
     ports: ["3000:3000"]
     depends_on: [api]
+
+  # Local model server. Runs Qwen2.5-Coder; the model is pulled once into the ollama_data volume:
+  #   docker compose up -d ollama
+  #   docker compose exec ollama ollama pull qwen2.5-coder:3b
+  # On Apple Silicon, Docker Desktop has no Metal GPU passthrough, so this runs on the CPU.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tracelock-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"            # host access is localhost only; never published on the LAN
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434           # listen inside the container so the api service can reach it
+      OLLAMA_NO_CLOUD: "1"                 # no cloud models or remote inference
+      OLLAMA_NUM_PARALLEL: "1"             # one request at a time: fits an 8 GB laptop
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: 10m               # unload the model after 10 idle minutes to free memory
+      OLLAMA_CONTEXT_LENGTH: "4096"        # TraceLock prompts are kept well under this
+    volumes:
+      - ollama_data:/root/.ollama          # model files live here, not in the container layer
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
 volumes:
   tracelock-data: {}
+  tracelock-cache: {}
+  ollama_data:
+    name: ollama_data                      # fixed name; `docker compose down` keeps it (never use `down -v`)
